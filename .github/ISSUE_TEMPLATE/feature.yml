@@ -1,0 +1,28 @@
+name: Feature ticket
+description: Atomic implementation ticket for Project Limbo
+title: "[Feature]: "
+labels: ["limbo:feature", "status:ready"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should be built?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Concrete checks that must pass before the ticket is complete.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test Plan
+      description: Unit and integration coverage expected for this change.
+    validations:
+      required: true

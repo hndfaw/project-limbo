@@ -1,0 +1,67 @@
+name: Autonomous Codex
+
+on:
+  schedule:
+    - cron: "*/45 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: autonomous-codex-main
+  cancel-in-progress: false
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Baseline tests
+        run: PYTHONPATH=src python -m unittest discover -s tests
+
+      - name: Install Codex CLI
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        run: npm install -g @openai/codex@latest
+
+      - name: Autonomous implementation pass
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          codex exec \
+            --cd "$GITHUB_WORKSPACE" \
+            --sandbox workspace-write \
+            --ask-for-approval never \
+            --search \
+            "You are maintaining Project Limbo autonomously. First run the tests. If tests fail, only fix the failing pipeline. If tests pass, inspect open GitHub issues, choose the next logical unblocked issue, implement it with focused code and exhaustive tests, then run the full test suite. Do not remove user work. Keep changes production-grade and commit-ready."
+
+      - name: Verify after Codex
+        run: PYTHONPATH=src python -m unittest discover -s tests
+
+      - name: Commit autonomous changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "codex-autonomous"
+            git config user.email "codex-autonomous@users.noreply.github.com"
+            git add -A
+            git commit -m "Autonomous Codex maintenance"
+            git push origin HEAD:main
+          else
+            echo "No changes to commit."
+          fi

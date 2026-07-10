@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "prepare",
+      "command": "mkdir -p build && printf 'name,score\\nAda,42\\nLin,37\\n' > build/input.csv",
+      "outputs": ["build/input.csv"]
+    },
+    {
+      "id": "summarize",
+      "needs": ["prepare"],
+      "command": "python3 -c \"import csv; rows=list(csv.DictReader(open('build/input.csv'))); print(sum(int(r['score']) for r in rows))\" > build/score.txt",
+      "inputs": ["build/input.csv"],
+      "outputs": ["build/score.txt"]
+    }
+  ]
+}
