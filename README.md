@@ -74,7 +74,7 @@ limbo run limbo.json
 
 ## Autonomous Development Loop
 
-This repository includes an opt-in GitHub Actions workflow at `.github/workflows/autonomous-codex.yml`. It is scheduled every 45 minutes and can also be started manually. The workflow is designed to:
+This repository includes an opt-in GitHub Actions workflow at `.github/workflows/autonomous-codex.yml`. It is scheduled on a true 45-minute cadence and can also be started manually. The workflow is designed to:
 
 1. Run the test suite first.
 2. Stop immediately if tests fail, preserving the rule that the next run must focus on fixing the pipeline.
@@ -87,7 +87,7 @@ The workflow requires repository secrets before it can perform model-backed work
 - `OPENAI_API_KEY`: used by Codex CLI.
 - A `GITHUB_TOKEN` is provided automatically by GitHub Actions for repository writes when workflow permissions allow it.
 
-The workflow is intentionally auditable: it does not hide test failures, and each autonomous run produces normal Git history.
+The workflow is intentionally auditable: it fails loudly when `OPENAI_API_KEY` is missing, does not hide test failures, and each autonomous run produces normal Git history.
 
 ## Development
 

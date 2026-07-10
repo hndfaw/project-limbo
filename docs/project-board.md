@@ -28,3 +28,7 @@ Each scheduled run should:
 3. Otherwise choose the lowest-numbered ready issue whose dependencies are complete.
 4. Implement a focused change with tests and docs.
 5. Run the full suite again before committing.
+
+## Required Secret
+
+Autonomous runs require the repository secret `OPENAI_API_KEY`. The workflow fails immediately when the secret is missing so missing credentials cannot masquerade as a successful no-op run.

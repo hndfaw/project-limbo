@@ -2,7 +2,11 @@ name: Autonomous Codex
 
 on:
   schedule:
-    - cron: "*/45 * * * *"
+    # True 45-minute cadence. A single "*/45" cron runs at :00 and :45,
+    # which alternates 45-minute and 15-minute gaps.
+    - cron: "0,45 0-23/3 * * *"
+    - cron: "30 1-23/3 * * *"
+    - cron: "15 2-23/3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -20,6 +24,7 @@ jobs:
     timeout-minutes: 40
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_API_KEY_SET: ${{ secrets.OPENAI_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,15 +36,19 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Require OpenAI API key
+        if: ${{ env.OPENAI_API_KEY_SET != 'true' }}
+        run: |
+          echo "::error title=Missing OPENAI_API_KEY::Autonomous Codex is enabled, but the repository secret OPENAI_API_KEY is not set. Add it under Settings > Secrets and variables > Actions > Repository secrets, then rerun this workflow."
+          exit 1
+
       - name: Baseline tests
         run: PYTHONPATH=src python -m unittest discover -s tests
 
       - name: Install Codex CLI
-        if: ${{ env.OPENAI_API_KEY != '' }}
         run: npm install -g @openai/codex@latest
 
       - name: Autonomous implementation pass
-        if: ${{ env.OPENAI_API_KEY != '' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
