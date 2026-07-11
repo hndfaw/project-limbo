@@ -53,12 +53,26 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          codex exec \
-            --cd "$GITHUB_WORKSPACE" \
-            --sandbox workspace-write \
-            --ask-for-approval never \
-            --search \
-            "You are maintaining Project Limbo autonomously. First run the tests. If tests fail, only fix the failing pipeline. If tests pass, inspect open GitHub issues, choose the next logical unblocked issue, implement it with focused code and exhaustive tests, then run the full test suite. Do not remove user work. Keep changes production-grade and commit-ready."
+          help="$(codex exec --help)"
+          args=(exec --cd "$GITHUB_WORKSPACE")
+
+          if grep -q -- "--sandbox" <<< "$help"; then
+            args+=(--sandbox workspace-write)
+          fi
+
+          if grep -q -- "--ask-for-approval" <<< "$help"; then
+            args+=(--ask-for-approval never)
+          elif grep -q -- "--approval-policy" <<< "$help"; then
+            args+=(--approval-policy never)
+          fi
+
+          if grep -q -- "--search" <<< "$help"; then
+            args+=(--search)
+          fi
+
+          args+=("You are maintaining Project Limbo autonomously. First run the tests. If tests fail, only fix the failing pipeline. If tests pass, inspect open GitHub issues, choose the next logical unblocked issue, implement it with focused code and exhaustive tests, then run the full test suite. Do not remove user work. Keep changes production-grade and commit-ready.")
+
+          codex "${args[@]}"
 
       - name: Verify after Codex
         run: PYTHONPATH=src python -m unittest discover -s tests
