@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from limbo.artifacts import Artifact, ArtifactStore, hash_file
 from limbo.cache import CacheEntry, TaskCache
 from limbo.errors import ExecutionError
 from limbo.fingerprint import outputs_exist, task_fingerprint
@@ -48,6 +49,7 @@ class TaskResult:
     stderr_path: Optional[Path] = None
     reason: Optional[str] = None
     attempts: Tuple[AttemptResult, ...] = ()
+    artifacts: Tuple[Artifact, ...] = ()
 
     @property
     def duration_seconds(self) -> float:
@@ -99,10 +101,12 @@ class RunResult:
 class LocalExecutor:
     """Execute a Limbo pipeline on the local machine."""
 
-    def __init__(self, state_dir: Path, max_workers: Optional[int] = None) -> None:
+    def __init__(self, state_dir: Path, max_workers: Optional[int] = None,
+                 artifact_store: Optional[ArtifactStore] = None) -> None:
         self.state_dir = Path(state_dir)
         self.cache = TaskCache(self.state_dir)
         self.max_workers = max_workers or max(1, min(32, (os.cpu_count() or 1) + 4))
+        self.artifact_store = artifact_store
 
     def plan_status(self, pipeline: PipelineSpec, force: bool = False) -> Dict[str, str]:
         """Return cached or pending for each task without running commands."""
@@ -111,11 +115,32 @@ class LocalExecutor:
         for task in pipeline.tasks:
             fingerprint = task_fingerprint(task, pipeline.base_dir)
             entry = self.cache.get(task.id)
-            if not force and entry and entry.status == "succeeded" and entry.fingerprint == fingerprint and outputs_exist(task, pipeline.base_dir):
+            if not force and self._cache_hit(task, entry, fingerprint, pipeline.base_dir):
                 status[task.id] = "cached"
             else:
                 status[task.id] = "pending"
         return status
+
+    def _cache_hit(self, task: TaskSpec, entry: Optional[CacheEntry], fingerprint: str, base_dir: Path) -> bool:
+        """Whether a task can be skipped: succeeded, unchanged, and outputs intact.
+
+        When an artifact store is configured and the cache entry recorded output
+        digests, validate the outputs by digest (detecting silent edits or
+        corruption); otherwise fall back to mere output existence.
+        """
+
+        if not entry or entry.status != "succeeded" or entry.fingerprint != fingerprint:
+            return False
+        if self.artifact_store is not None and entry.artifacts:
+            return self._outputs_match_digests(entry, base_dir)
+        return outputs_exist(task, base_dir)
+
+    def _outputs_match_digests(self, entry: CacheEntry, base_dir: Path) -> bool:
+        for logical_path, digest in entry.artifacts:
+            path = _resolve_output(base_dir, logical_path)
+            if not path.is_file() or hash_file(path) != digest:
+                return False
+        return True
 
     def run(self, pipeline: PipelineSpec, force: bool = False, dry_run: bool = False,
             resumed_from: Optional[str] = None) -> RunResult:
@@ -297,7 +322,7 @@ class LocalExecutor:
         started_at = time.time()
 
         entry = self.cache.get(task.id)
-        if not force and entry and entry.status == "succeeded" and entry.fingerprint == fingerprint and outputs_exist(task, pipeline.base_dir):
+        if not force and self._cache_hit(task, entry, fingerprint, pipeline.base_dir):
             return TaskResult(
                 task_id=task.id,
                 status="skipped",
@@ -341,6 +366,7 @@ class LocalExecutor:
                 time.sleep(delay)
 
         status = "succeeded" if returncode == 0 else "failed"
+        artifacts = self._ingest_artifacts(task, pipeline.base_dir) if status == "succeeded" else ()
         result = TaskResult(
             task_id=task.id,
             status=status,
@@ -352,12 +378,26 @@ class LocalExecutor:
             stderr_path=stderr_path,
             reason=reason if status == "failed" else None,
             attempts=tuple(attempts),
+            artifacts=artifacts,
         )
 
         if status == "succeeded":
-            self.cache.put(CacheEntry(task.id, fingerprint, "succeeded", run_id))
+            digests = tuple((art.logical_path, art.digest) for art in artifacts if art.logical_path)
+            self.cache.put(CacheEntry(task.id, fingerprint, "succeeded", run_id, digests))
 
         return result
+
+    def _ingest_artifacts(self, task: TaskSpec, base_dir: Path) -> Tuple[Artifact, ...]:
+        """Store a succeeded task's declared outputs in the artifact store, if configured."""
+
+        if self.artifact_store is None or not task.outputs:
+            return ()
+        artifacts = []
+        for output in task.outputs:
+            path = _resolve_output(base_dir, output)
+            if path.is_file():
+                artifacts.append(self.artifact_store.put_file(path, producer=task.id, logical_path=output))
+        return tuple(artifacts)
 
     def _execute_attempt(self, task: TaskSpec, pipeline: PipelineSpec, stdout_path: Path,
                          stderr_path: Path) -> Tuple[Optional[int], bool, Optional[str]]:
@@ -420,11 +460,17 @@ class LocalExecutor:
                         }
                         for attempt in result.attempts
                     ],
+                    "artifacts": [artifact.to_dict() for artifact in result.artifacts],
                 }
                 for result in run_result.results
             ],
         }
         (run_dir / "manifest.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _resolve_output(base_dir: Path, output: str) -> Path:
+    path = Path(output)
+    return path if path.is_absolute() else base_dir / path
 
 
 def _task_cwd(base_dir: Path, task: TaskSpec) -> Path:

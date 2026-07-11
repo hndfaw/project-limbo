@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from limbo.artifacts import ArtifactStore
 from limbo.engine import LocalExecutor
 from limbo.errors import ExecutionError
 from limbo.spec import load_pipeline
@@ -13,6 +14,44 @@ class EngineTests(unittest.TestCase):
         path = base / "limbo.json"
         path.write_text(json.dumps(payload), encoding="utf-8")
         return load_pipeline(path)
+
+    def test_artifact_store_records_outputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "gen", "command": "printf hello > out.txt", "outputs": ["out.txt"]},
+            ]})
+            store = ArtifactStore(base / ".limbo" / "artifacts")
+            executor = LocalExecutor(base / ".limbo", max_workers=1, artifact_store=store)
+
+            result = executor.run(pipeline)
+
+            artifacts = result.results[0].artifacts
+            self.assertEqual(1, len(artifacts))
+            self.assertEqual("gen", artifacts[0].producer)
+            self.assertEqual("out.txt", artifacts[0].logical_path)
+            self.assertEqual(5, artifacts[0].size)
+            self.assertTrue(store.exists(artifacts[0].digest))
+            manifest = json.loads((base / ".limbo" / "runs" / result.run_id / "manifest.json").read_text())
+            self.assertEqual(1, len(manifest["results"][0]["artifacts"]))
+
+    def test_digest_cache_validation_detects_changed_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "gen", "command": "printf hello > out.txt", "outputs": ["out.txt"]},
+            ]})
+            store = ArtifactStore(base / ".limbo" / "artifacts")
+            executor = LocalExecutor(base / ".limbo", max_workers=1, artifact_store=store)
+
+            first = executor.run(pipeline)
+            second = executor.run(pipeline)  # unchanged -> cache hit
+            (base / "out.txt").write_text("tampered", encoding="utf-8")
+            third = executor.run(pipeline)   # output digest changed -> must re-run
+
+            self.assertEqual("succeeded", first.results[0].status)
+            self.assertEqual("skipped", second.results[0].status)
+            self.assertEqual("succeeded", third.results[0].status)
 
     def test_runs_tasks_and_skips_cache_on_second_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:

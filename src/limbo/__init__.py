@@ -1,5 +1,6 @@
 """Project Limbo pipeline engine."""
 
+from limbo.artifacts import Artifact, ArtifactStore
 from limbo.engine import LocalExecutor
 from limbo.leases import Lease, LeaseStore, run_workers
 from limbo.spec import PipelineSpec, TaskSpec, load_pipeline
@@ -15,5 +16,7 @@ __all__ = [
     "Lease",
     "LeaseStore",
     "run_workers",
+    "Artifact",
+    "ArtifactStore",
     "__version__",
 ]

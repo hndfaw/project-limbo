@@ -152,6 +152,25 @@ limbo resume <run-id>       # restarts only the incomplete work
 
 Retry configuration deliberately does not affect a task's fingerprint, so caches stay deterministic across retries and resumes.
 
+## Artifact Store
+
+Task outputs can be captured in a content-addressed **artifact store** (`src/limbo/artifacts.py`) so they can be verified, deduplicated, and reused. Every blob is addressed by the SHA-256 digest of its contents, which makes storing the same bytes twice idempotent and makes on-disk corruption detectable by recomputing the hash.
+
+An `Artifact` records the metadata a run keeps for each output — `digest`, `size`, `media_type`, the producing task, and the logical (pipeline-relative) path. The `ArtifactStore` offers content-addressed `put_bytes` / `put_file` / `get_bytes` / `exists` / `verify`, with atomic writes and streamed hashing for large files.
+
+Pass a store to the executor to opt in; runs then record each succeeded task's outputs as artifacts in the manifest, and cache validation upgrades from "outputs still exist" to "outputs still match their recorded digest" — so a silently edited or corrupted output invalidates the cache:
+
+```python
+from limbo.artifacts import ArtifactStore
+from limbo.engine import LocalExecutor
+
+store = ArtifactStore(".limbo/artifacts")
+executor = LocalExecutor(".limbo", artifact_store=store)
+executor.run(pipeline)  # outputs are ingested; manifest references their artifacts
+```
+
+Without a store the executor behaves exactly as before (outputs are checked for existence only), so this is fully opt-in.
+
 ## Worker Lease Protocol
 
 The scheduling state for a run can be coordinated through a lease protocol so the same pipeline runs under a single local worker or many remote ones. A `LeaseStore` (see `src/limbo/leases.py`) owns which tasks are complete, failed, or currently leased, and workers interact with it through five transitions:
@@ -237,7 +256,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 - Issue 2: Built-in JSONL and CSV data operators (filter, project, rename, derive, join, aggregate) with a safe expression evaluator.
 - Issue 3: Retry policies (backoff, retryable exit codes/timeouts), attempt history in manifests, failure summaries, and `limbo resume`.
 - Issue 4: Worker lease protocol with signed, expiring task leases and dependency-gated claiming.
-- Issue 5: Artifact store abstraction for local disk, S3-compatible storage, and content-addressed blobs.
+- Issue 5: Content-addressed artifact store with digest metadata, manifest references, and digest-based cache validation.
 - Issue 6: Metrics, traces, and run visualization.
 - Issue 7: Policy engine for command allowlists, secret redaction, and sandbox profiles.
 - Issue 8: Distributed scheduler with heartbeats and backpressure.
