@@ -47,7 +47,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           sandbox: workspace-write
-          output-file: codex-output.md
+          output-file: /tmp/codex-output.md
           prompt: |
             You are maintaining Project Limbo autonomously.
 
@@ -60,14 +60,14 @@ jobs:
 
       - name: Check Codex result
         run: |
-          if [ ! -s codex-output.md ]; then
-            echo "::error title=Missing Codex output::Codex did not write codex-output.md."
+          if [ ! -s /tmp/codex-output.md ]; then
+            echo "::error title=Missing Codex output::Codex did not write its output file."
             exit 1
           fi
 
-          if grep -Eiq "Blocked by the execution sandbox|No tests ran|Quota exceeded|Unauthorized" codex-output.md; then
+          if grep -Eiq "Blocked by the execution sandbox|No tests ran|Quota exceeded|Unauthorized" /tmp/codex-output.md; then
             echo "::error title=Codex did not complete autonomous work::Codex reported a blocker instead of completing maintenance."
-            cat codex-output.md
+            cat /tmp/codex-output.md
             exit 1
           fi
 
