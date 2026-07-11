@@ -67,6 +67,7 @@ jobs:
             the working tree. A later workflow step verifies the tests and
             commits the diff. Do not remove existing user work.
           claude_args: |
+            --model claude-sonnet-5
             --max-turns 40
             --allowedTools Bash,Read,Write,Edit,Grep,Glob
 

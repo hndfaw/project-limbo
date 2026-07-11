@@ -189,6 +189,8 @@ The workflow requires **one** of these repository secrets before it can perform 
 
 A `GITHUB_TOKEN` is provided automatically by GitHub Actions for repository writes when workflow permissions allow it.
 
+The loop runs on **Claude Sonnet 5** (`--model claude-sonnet-5`) — near-Opus quality on coding and agentic work at a lower per-token cost, which suits a job that runs every 45 minutes. Switch the `--model` line in the workflow to `claude-opus-4-8` for maximum capability, or `claude-haiku-4-5` for the cheapest runs.
+
 The workflow is intentionally auditable: it fails loudly when no Claude credential is configured, does not hide test failures, keeps commit/push under the workflow's control rather than the model's, and each autonomous run produces normal Git history.
 
 ## Development
