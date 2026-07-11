@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
+from limbo import __version__
 from limbo.engine import LocalExecutor, RunResult
 from limbo.errors import ExecutionError, LimboError
 from limbo.graph import build_plan
@@ -41,6 +42,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             result = executor.resume(args.run_id, force=args.force)
             _print_run(result, json_output=args.json)
             return 0
+        if args.command == "runs":
+            executor = LocalExecutor(Path(args.state_dir))
+            _print_runs(executor.list_runs(limit=args.limit), json_output=args.json)
+            return 0
     except ExecutionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         _print_failure_summary(exc, json_output=getattr(args, "json", False))
@@ -55,6 +60,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="limbo", description="Run reproducible local DAG pipelines.")
+    parser.add_argument("--version", action="version", version=f"limbo {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate = subparsers.add_parser("validate", help="validate a pipeline spec")
@@ -68,11 +74,16 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="produce the run plan without executing commands")
 
     resume = subparsers.add_parser("resume", help="resume a prior run, re-executing only incomplete work")
-    resume.add_argument("run_id", help="id of the run to resume (see .limbo/runs)")
+    resume.add_argument("run_id", help="id of the run to resume (see 'limbo runs')")
     resume.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
     resume.add_argument("--max-workers", type=int, default=None, help="maximum parallel tasks")
     resume.add_argument("--force", action="store_true", help="ignore cached successful tasks")
     resume.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    runs = subparsers.add_parser("runs", help="list past runs and their task-status counts")
+    runs.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
+    runs.add_argument("--limit", type=int, default=20, help="maximum number of runs to show (newest first)")
+    runs.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     return parser
 
@@ -142,6 +153,22 @@ def _print_run(result: RunResult, json_output: bool) -> None:
             notes.append(f"{len(item.attempts)} attempts")
         detail = f" ({', '.join(notes)})" if notes else ""
         print(f"  {item.task_id}: {item.status}{detail}")
+
+
+def _print_runs(runs: list, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps({"runs": runs}, indent=2, sort_keys=True))
+        return
+    if not runs:
+        print("no runs found")
+        return
+    for run in runs:
+        counts = run.get("counts") or {}
+        summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items())) or "no tasks"
+        line = f"{run['run_id']}: {summary}"
+        if run.get("resumed_from"):
+            line += f" (resumed from {run['resumed_from']})"
+        print(line)
 
 
 def _print_failure_summary(exc: ExecutionError, json_output: bool) -> None:

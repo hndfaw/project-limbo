@@ -172,6 +172,49 @@ class LocalExecutor:
         pipeline = load_pipeline(path)
         return self.run(pipeline, force=force, resumed_from=run_id)
 
+    def list_runs(self, limit: Optional[int] = None) -> List[Dict[str, object]]:
+        """Summarize past runs (newest first) from their manifests.
+
+        Each summary carries the run id, the pipeline path, whether it resumed
+        another run, and a per-status task count. Malformed manifests are
+        skipped rather than aborting the listing.
+        """
+
+        runs_dir = self.state_dir / "runs"
+        if not runs_dir.exists():
+            return []
+        # Order by manifest modification time (newest first). The run id only
+        # has second resolution, so sorting by id alone would tie-break on its
+        # random suffix rather than on when the run actually finished.
+        ranked: List[tuple] = []
+        for manifest_path in runs_dir.glob("*/manifest.json"):
+            try:
+                mtime = manifest_path.stat().st_mtime_ns
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(raw, dict):
+                continue
+            results = raw.get("results", [])
+            counts: Dict[str, int] = {}
+            if isinstance(results, list):
+                for result in results:
+                    if isinstance(result, dict):
+                        status = result.get("status")
+                        if isinstance(status, str):
+                            counts[status] = counts.get(status, 0) + 1
+            run_id = raw.get("run_id", manifest_path.parent.name)
+            summary = {
+                "run_id": run_id,
+                "resumed_from": raw.get("resumed_from"),
+                "pipeline": raw.get("pipeline"),
+                "counts": counts,
+            }
+            ranked.append((mtime, run_id, summary))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        summaries = [summary for _, _, summary in ranked]
+        return summaries if limit is None else summaries[:limit]
+
     def _read_manifest(self, run_id: str) -> Dict[str, object]:
         manifest_path = self.state_dir / "runs" / run_id / "manifest.json"
         if not manifest_path.exists():
