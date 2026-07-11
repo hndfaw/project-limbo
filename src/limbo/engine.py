@@ -8,7 +8,7 @@ import subprocess
 import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -16,6 +16,7 @@ from limbo.artifacts import Artifact, ArtifactStore, hash_file
 from limbo.cache import CacheEntry, TaskCache
 from limbo.errors import ExecutionError
 from limbo.fingerprint import outputs_exist, task_fingerprint
+from limbo.observability import EventLog, RunMetrics, redact_env
 from limbo.graph import downstream_tasks
 from limbo.operators import OperatorError, run_operator
 from limbo.spec import PipelineSpec, TaskSpec
@@ -50,6 +51,7 @@ class TaskResult:
     reason: Optional[str] = None
     attempts: Tuple[AttemptResult, ...] = ()
     artifacts: Tuple[Artifact, ...] = ()
+    queued_at: Optional[float] = None
 
     @property
     def duration_seconds(self) -> float:
@@ -165,8 +167,12 @@ class LocalExecutor:
             ]
             return RunResult(run_id=run_id, results=results, resumed_from=resumed_from)
 
-        results = self._run_graph(pipeline, run_id, run_dir, force)
+        events = EventLog(run_dir / "events.jsonl")
+        events.emit("run_started", run_id=run_id, task_count=len(pipeline.tasks), resumed_from=resumed_from)
+        results = self._run_graph(pipeline, run_id, run_dir, force, events)
         run_result = RunResult(run_id=run_id, results=results, resumed_from=resumed_from)
+        events.emit("run_finished", run_id=run_id,
+                    status="failed" if run_result.failed else "succeeded")
         self._write_manifest(run_dir, run_result, pipeline)
 
         if run_result.failed:
@@ -252,7 +258,8 @@ class LocalExecutor:
             raise ExecutionError(f"manifest for run {run_id!r} is malformed")
         return raw
 
-    def _run_graph(self, pipeline: PipelineSpec, run_id: str, run_dir: Path, force: bool) -> List[TaskResult]:
+    def _run_graph(self, pipeline: PipelineSpec, run_id: str, run_dir: Path, force: bool,
+                   events: EventLog) -> List[TaskResult]:
         tasks_by_id = pipeline.task_map
         remaining_deps: Dict[str, Set[str]] = {task.id: set(task.needs) for task in pipeline.tasks}
         dependents: Dict[str, Set[str]] = {task.id: set() for task in pipeline.tasks}
@@ -265,6 +272,7 @@ class LocalExecutor:
         failed: Set[str] = set()
         blocked: Set[str] = set()
         results: List[TaskResult] = []
+        queued_at: Dict[str, float] = {}
         futures: Dict[Future[TaskResult], str] = {}
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
@@ -274,7 +282,9 @@ class LocalExecutor:
                     if task_id in blocked:
                         continue
                     task = tasks_by_id[task_id]
-                    futures[pool.submit(self._run_task, task, pipeline, run_id, run_dir, force)] = task_id
+                    queued_at[task_id] = time.time()
+                    events.emit("task_queued", task_id=task_id)
+                    futures[pool.submit(self._run_task, task, pipeline, run_id, run_dir, force, events)] = task_id
 
                 if not futures:
                     break
@@ -282,7 +292,7 @@ class LocalExecutor:
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 for future in done:
                     task_id = futures.pop(future)
-                    result = future.result()
+                    result = replace(future.result(), queued_at=queued_at.get(task_id))
                     results.append(result)
                     completed.add(task_id)
 
@@ -293,6 +303,7 @@ class LocalExecutor:
                         for blocked_id in sorted(newly_blocked):
                             if blocked_id not in completed and blocked_id not in [item.task_id for item in results]:
                                 now = time.time()
+                                events.emit("task_blocked", task_id=blocked_id, reason=f"dependency failed: {task_id}")
                                 results.append(
                                     TaskResult(
                                         task_id=blocked_id,
@@ -317,12 +328,14 @@ class LocalExecutor:
 
         return sorted(results, key=lambda result: [task.id for task in pipeline.tasks].index(result.task_id))
 
-    def _run_task(self, task: TaskSpec, pipeline: PipelineSpec, run_id: str, run_dir: Path, force: bool) -> TaskResult:
+    def _run_task(self, task: TaskSpec, pipeline: PipelineSpec, run_id: str, run_dir: Path, force: bool,
+                  events: EventLog) -> TaskResult:
         fingerprint = task_fingerprint(task, pipeline.base_dir)
         started_at = time.time()
 
         entry = self.cache.get(task.id)
         if not force and self._cache_hit(task, entry, fingerprint, pipeline.base_dir):
+            events.emit("task_skipped", task_id=task.id, reason="cache-hit")
             return TaskResult(
                 task_id=task.id,
                 status="skipped",
@@ -331,6 +344,8 @@ class LocalExecutor:
                 finished_at=time.time(),
                 reason="cache-hit",
             )
+
+        events.emit("task_started", task_id=task.id, env=redact_env(task.env) or None)
 
         task_dir = run_dir / task.id
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -385,6 +400,8 @@ class LocalExecutor:
             digests = tuple((art.logical_path, art.digest) for art in artifacts if art.logical_path)
             self.cache.put(CacheEntry(task.id, fingerprint, "succeeded", run_id, digests))
 
+        events.emit(f"task_{status}", task_id=task.id, returncode=returncode,
+                    attempts=len(attempts), artifacts=len(artifacts) or None)
         return result
 
     def _ingest_artifacts(self, task: TaskSpec, base_dir: Path) -> Tuple[Artifact, ...]:
@@ -440,12 +457,14 @@ class LocalExecutor:
             "run_id": run_result.run_id,
             "resumed_from": run_result.resumed_from,
             "pipeline": str(pipeline.source_path) if pipeline.source_path else None,
+            "metrics": RunMetrics.from_results(run_result.results).to_dict(),
             "results": [
                 {
                     "task_id": result.task_id,
                     "status": result.status,
                     "fingerprint": result.fingerprint,
                     "duration_seconds": result.duration_seconds,
+                    "queued_at": result.queued_at,
                     "returncode": result.returncode,
                     "stdout_path": str(result.stdout_path) if result.stdout_path else None,
                     "stderr_path": str(result.stderr_path) if result.stderr_path else None,

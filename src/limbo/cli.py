@@ -46,6 +46,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             executor = LocalExecutor(Path(args.state_dir))
             _print_runs(executor.list_runs(limit=args.limit), json_output=args.json)
             return 0
+        if args.command == "inspect":
+            _inspect(Path(args.state_dir), args.run_id, json_output=args.json)
+            return 0
+        if args.command == "timeline":
+            _timeline(Path(args.state_dir), args.run_id, json_output=args.json)
+            return 0
     except ExecutionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         _print_failure_summary(exc, json_output=getattr(args, "json", False))
@@ -84,6 +90,16 @@ def _parser() -> argparse.ArgumentParser:
     runs.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
     runs.add_argument("--limit", type=int, default=20, help="maximum number of runs to show (newest first)")
     runs.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    inspect = subparsers.add_parser("inspect", help="summarize a run's manifest and metrics")
+    inspect.add_argument("run_id", help="id of the run to inspect (see 'limbo runs')")
+    inspect.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
+    inspect.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    timeline = subparsers.add_parser("timeline", help="show a readable execution timeline for a run")
+    timeline.add_argument("run_id", help="id of the run to show (see 'limbo runs')")
+    timeline.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
+    timeline.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     return parser
 
@@ -169,6 +185,68 @@ def _print_runs(runs: list, json_output: bool) -> None:
         if run.get("resumed_from"):
             line += f" (resumed from {run['resumed_from']})"
         print(line)
+
+
+def _load_manifest(state_dir: Path, run_id: str) -> dict:
+    path = state_dir / "runs" / run_id / "manifest.json"
+    if not path.exists():
+        raise ExecutionError(f"no run found with id {run_id!r} under {state_dir}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ExecutionError(f"could not read manifest for run {run_id!r}: {exc}") from exc
+
+
+def _inspect(state_dir: Path, run_id: str, json_output: bool) -> None:
+    manifest = _load_manifest(state_dir, run_id)
+    if json_output:
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+        return
+    print(f"run {manifest.get('run_id', run_id)}")
+    if manifest.get("resumed_from"):
+        print(f"  resumed from: {manifest['resumed_from']}")
+    if manifest.get("pipeline"):
+        print(f"  pipeline: {manifest['pipeline']}")
+    metrics = manifest.get("metrics") or {}
+    if metrics:
+        print("  metrics: " + ", ".join(
+            f"{key}={_format_number(metrics[key])}" for key in sorted(metrics)
+        ))
+    for result in manifest.get("results", []):
+        detail = []
+        if result.get("returncode") is not None:
+            detail.append(f"exit {result['returncode']}")
+        detail.append(f"{result.get('duration_seconds', 0.0) * 1000:.0f}ms")
+        if len(result.get("attempts", [])) > 1:
+            detail.append(f"{len(result['attempts'])} attempts")
+        if result.get("artifacts"):
+            detail.append(f"{len(result['artifacts'])} artifact(s)")
+        if result.get("reason"):
+            detail.append(result["reason"])
+        print(f"  {result['task_id']}: {result['status']} ({', '.join(detail)})")
+
+
+def _timeline(state_dir: Path, run_id: str, json_output: bool) -> None:
+    from limbo.observability import EventLog, build_timeline
+
+    events = EventLog.read(state_dir / "runs" / run_id / "events.jsonl")
+    if not events:
+        # Fall back to confirming the run exists so the error is clear.
+        _load_manifest(state_dir, run_id)
+        print("no events recorded for this run") if not json_output else print(json.dumps({"events": []}))
+        return
+    if json_output:
+        print(json.dumps({"events": events}, indent=2, sort_keys=True))
+        return
+    print(f"timeline for {run_id}")
+    for line in build_timeline(events):
+        print(f"  {line}")
+
+
+def _format_number(value) -> str:
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return str(value)
 
 
 def _print_failure_summary(exc: ExecutionError, json_output: bool) -> None:
