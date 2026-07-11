@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,10 @@ class CacheEntry:
     fingerprint: str
     status: str
     run_id: str
+    # Optional digest records for the task's outputs: ``(logical_path, digest)``.
+    # Populated when an artifact store is configured; enables digest-level
+    # cache validation instead of mere output existence.
+    artifacts: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
 
 
 class TaskCache:
@@ -54,7 +58,14 @@ class TaskCache:
             status = item.get("status")
             run_id = item.get("run_id")
             if isinstance(task_id, str) and isinstance(fingerprint, str) and isinstance(status, str) and isinstance(run_id, str):
-                self._entries[task_id] = CacheEntry(task_id, fingerprint, status, run_id)
+                artifacts = tuple(
+                    (record["logical_path"], record["digest"])
+                    for record in item.get("artifacts", [])
+                    if isinstance(record, dict)
+                    and isinstance(record.get("logical_path"), str)
+                    and isinstance(record.get("digest"), str)
+                )
+                self._entries[task_id] = CacheEntry(task_id, fingerprint, status, run_id, artifacts)
 
     def _flush(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +74,10 @@ class TaskCache:
                 "fingerprint": entry.fingerprint,
                 "status": entry.status,
                 "run_id": entry.run_id,
+                "artifacts": [
+                    {"logical_path": logical_path, "digest": digest}
+                    for logical_path, digest in entry.artifacts
+                ],
             }
             for task_id, entry in sorted(self._entries.items())
         }
