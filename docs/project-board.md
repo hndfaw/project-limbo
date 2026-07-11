@@ -1,6 +1,11 @@
 # Project Board
 
-GitHub Issues are the source of truth for autonomous work selection. The connector available in this Codex session can create and update issues, but does not expose GitHub Projects v2 board creation; the local `gh` token is also invalid. This file mirrors the intended board columns so the repository still has an auditable plan.
+GitHub Issues are the source of truth for autonomous work selection. This file
+mirrors the intended board columns so the repository has an auditable plan.
+
+**Any agent working this repo must read [`AGENTS.md`](../AGENTS.md) first** — it
+is the operating manual (how to pick the next task, the implement→test→merge
+workflow, environment rules, and which docs to update).
 
 ## Done
 
@@ -14,6 +19,12 @@ GitHub Issues are the source of truth for autonomous work selection. The connect
 ## Ready
 
 - [#7 Add command policy, secret redaction, and sandbox profiles](https://github.com/hndfaw/project-limbo/issues/7)
+- [#17 Re-enable CI to validate every PR](https://github.com/hndfaw/project-limbo/issues/17)
+- [#18 Add ruff + mypy lint and type-check gate](https://github.com/hndfaw/project-limbo/issues/18)
+- [#19 Verify pip install and the limbo console entry point](https://github.com/hndfaw/project-limbo/issues/19)
+- [#20 Refresh architecture doc for leases, artifacts, observability](https://github.com/hndfaw/project-limbo/issues/20)
+- [#21 Add CHANGELOG and align package version](https://github.com/hndfaw/project-limbo/issues/21)
+- [#22 End-to-end CLI verification pass](https://github.com/hndfaw/project-limbo/issues/22)
 
 ## Blocked
 
@@ -21,13 +32,13 @@ GitHub Issues are the source of truth for autonomous work selection. The connect
 
 ## Autonomous Selection Rule
 
-Each scheduled run should:
+See [`AGENTS.md`](../AGENTS.md) for the authoritative loop. In short, each run:
 
-1. Run the full test suite before editing.
-2. If tests fail, fix the failing pipeline first and do not start feature work.
-3. Otherwise choose the lowest-numbered ready issue whose dependencies are complete.
-4. Implement a focused change with tests and docs.
-5. Run the full suite again before committing.
+1. Runs the full test suite before editing.
+2. If tests fail, fixes the failing suite first and does not start feature work.
+3. Otherwise chooses the lowest-numbered open, unblocked issue.
+4. Implements a focused change with tests and docs, then merges its own PR.
+5. Runs the full suite again before merging (never merges red).
 
 ## Required Secret
 

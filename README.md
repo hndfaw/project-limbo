@@ -1,5 +1,7 @@
 # Project Limbo
 
+> **Working on this repo (human or agent)?** Read [`AGENTS.md`](AGENTS.md) first — it is the operating manual: how to pick the next task, the implement → test → merge workflow, and which docs to keep updated.
+
 Project Limbo is a local-first pipeline engine for teams that need reproducible automation without committing to a heavyweight orchestrator. It runs declarative DAGs of tasks, fingerprints their inputs, skips work that is already up to date, captures structured logs, and fails fast when a dependency chain is unsafe to continue.
 
 The long-term vision is a production-grade scheduler that can start as a single binary on a laptop, then grow into a distributed task system with remote workers, leases, artifact stores, backpressure, and policy controls. The first implementation slice is intentionally practical: a tested CLI runner that can already coordinate data pipelines, build steps, report generation, and other shell-driven workflows.
