@@ -11,3 +11,6 @@ venv/
 build/
 examples/build/
 dist/
+
+# Claude Code local settings (personal permissions)
+.claude/settings.local.json

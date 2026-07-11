@@ -152,6 +152,34 @@ limbo resume <run-id>       # restarts only the incomplete work
 
 Retry configuration deliberately does not affect a task's fingerprint, so caches stay deterministic across retries and resumes.
 
+## Observability
+
+Every run writes structured **events** and **metrics** so failures are easy to debug:
+
+- `.limbo/runs/<run-id>/events.jsonl` — a JSONL event stream capturing each task lifecycle transition (`run_started`, `task_queued`, `task_started`, `task_succeeded`/`task_failed`/`task_skipped`, `task_blocked`, `run_finished`).
+- The run manifest records **metrics** — task counts, cache hits, failure and blocked counts, and total run/queue time.
+- **Secret redaction:** environment metadata is passed through a redactor before it reaches an event, so secret-looking values (API keys, tokens, passwords — by name or value shape) are written as `***redacted***` and never touch disk.
+
+Two commands read this back:
+
+```bash
+limbo inspect <run-id>    # manifest summary: per-task status, durations, artifacts, and metrics
+limbo timeline <run-id>   # readable, relative-time execution timeline from the event stream
+```
+
+Example timeline:
+
+```
+timeline for 20260101120000-abcd1234
+  +  0.000s  run started (3 task(s))
+  +  0.001s  a: queued
+  +  0.002s  a: started
+  +  0.050s  a: succeeded (exit 0)
+  +  0.051s  b: failed (exit 1)
+  +  0.051s  c: blocked (dependency failed: b)
+  +  0.052s  run finished: failed
+```
+
 ## Artifact Store
 
 Task outputs can be captured in a content-addressed **artifact store** (`src/limbo/artifacts.py`) so they can be verified, deduplicated, and reused. Every blob is addressed by the SHA-256 digest of its contents, which makes storing the same bytes twice idempotent and makes on-disk corruption detectable by recomputing the hash.
@@ -211,6 +239,8 @@ limbo plan limbo.json
 limbo run limbo.json
 limbo runs
 limbo resume <run-id>
+limbo inspect <run-id>
+limbo timeline <run-id>
 ```
 
 `limbo runs` lists recent runs (newest first) with per-status task counts, so you can find the `<run-id>` to pass to `limbo resume`.
@@ -257,7 +287,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 - Issue 3: Retry policies (backoff, retryable exit codes/timeouts), attempt history in manifests, failure summaries, and `limbo resume`.
 - Issue 4: Worker lease protocol with signed, expiring task leases and dependency-gated claiming.
 - Issue 5: Content-addressed artifact store with digest metadata, manifest references, and digest-based cache validation.
-- Issue 6: Metrics, traces, and run visualization.
+- Issue 6: JSONL lifecycle events, run metrics, secret redaction, and `limbo inspect` / `limbo timeline`.
 - Issue 7: Policy engine for command allowlists, secret redaction, and sandbox profiles.
 - Issue 8: Distributed scheduler with heartbeats and backpressure.
 

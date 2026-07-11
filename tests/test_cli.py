@@ -131,6 +131,51 @@ class CliTests(unittest.TestCase):
             self.assertIn("1 succeeded", runs.stdout)
 
 
+    def test_cli_inspect_and_timeline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            state = base / ".limbo"
+            spec = base / "limbo.json"
+            spec.write_text(
+                json.dumps({"version": 1, "tasks": [
+                    {"id": "write", "command": "printf ok > out.txt", "outputs": ["out.txt"]},
+                ]}),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "run", str(spec), "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            run_id = next((state / "runs").iterdir()).name
+
+            inspect = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "inspect", run_id, "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, inspect.returncode, inspect.stderr)
+            self.assertIn("write: succeeded", inspect.stdout)
+            self.assertIn("metrics:", inspect.stdout)
+
+            timeline = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "timeline", run_id, "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, timeline.returncode, timeline.stderr)
+            self.assertIn("run started", timeline.stdout)
+            self.assertIn("write: succeeded", timeline.stdout)
+            self.assertIn("run finished: succeeded", timeline.stdout)
+
+    def test_cli_inspect_unknown_run_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            result = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "inspect", "nope", "--state-dir", str(base / ".limbo")],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(2, result.returncode)
+            self.assertIn("no run found", result.stderr)
+
+
 def _env():
     env = os.environ.copy()
     existing = env.get("PYTHONPATH")
