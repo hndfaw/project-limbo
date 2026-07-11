@@ -152,6 +152,26 @@ limbo resume <run-id>       # restarts only the incomplete work
 
 Retry configuration deliberately does not affect a task's fingerprint, so caches stay deterministic across retries and resumes.
 
+## Worker Lease Protocol
+
+The scheduling state for a run can be coordinated through a lease protocol so the same pipeline runs under a single local worker or many remote ones. A `LeaseStore` (see `src/limbo/leases.py`) owns which tasks are complete, failed, or currently leased, and workers interact with it through five transitions:
+
+- **claim** a ready task — only tasks whose dependencies have all completed are ever offered, so a worker can never start a task before its inputs exist;
+- **heartbeat** / **renew** to prove liveness and extend the lease;
+- **complete** or **fail** to finish it (a failure blocks every downstream dependent).
+
+Each claim mints a fresh **HMAC-signed lease token**; every follow-up call must present it, and a tampered or forged token is rejected. Leases **expire** after a configurable timeout without a heartbeat, at which point the task becomes claimable again and the previous holder is fenced out (its token stops working) — a crashed worker cannot strand a task.
+
+```python
+from limbo.leases import LeaseStore, run_workers
+
+store = LeaseStore.from_pipeline(pipeline, secret="shared-secret")
+# Single-process mode: one worker drains the graph in dependency order.
+run_workers(store, execute=lambda task_id: run_task(task_id), worker_ids=["local"])
+# Or many in-process/remote workers claiming independent tasks concurrently:
+run_workers(store, execute=run_task, worker_ids=["w1", "w2", "w3"])
+```
+
 ## Usage
 
 Run from a checkout:
@@ -216,7 +236,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 - Issue 1: Engine foundation, cache-aware execution, and CLI.
 - Issue 2: Built-in JSONL and CSV data operators (filter, project, rename, derive, join, aggregate) with a safe expression evaluator.
 - Issue 3: Retry policies (backoff, retryable exit codes/timeouts), attempt history in manifests, failure summaries, and `limbo resume`.
-- Issue 4: Remote worker protocol with signed task leases.
+- Issue 4: Worker lease protocol with signed, expiring task leases and dependency-gated claiming.
 - Issue 5: Artifact store abstraction for local disk, S3-compatible storage, and content-addressed blobs.
 - Issue 6: Metrics, traces, and run visualization.
 - Issue 7: Policy engine for command allowlists, secret redaction, and sandbox profiles.
