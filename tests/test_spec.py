@@ -86,6 +86,37 @@ class SpecTests(unittest.TestCase):
             with self.assertRaisesRegex(SpecError, "timeout_seconds"):
                 load_pipeline(path)
 
+    def test_loads_operator_and_derives_cache_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "filter", "operator": {"type": "filter", "format": "jsonl", "input": "in.jsonl",
+                "output": "out.jsonl", "where": {"field": "active", "equals": True}}
+            }]})
+
+            task = load_pipeline(path).tasks[0]
+
+            self.assertIsNone(task.command)
+            self.assertEqual(["in.jsonl"], task.inputs)
+            self.assertEqual(["out.jsonl"], task.outputs)
+
+    def test_rejects_command_and_operator_together(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "bad", "command": "true", "operator": {"type": "project", "format": "csv",
+                "input": "in.csv", "output": "out.csv", "fields": ["id"]}
+            }]})
+            with self.assertRaisesRegex(SpecError, "exactly one"):
+                load_pipeline(path)
+
+    def test_rejects_invalid_operator_configuration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "bad", "operator": {"type": "join", "format": "csv", "left": "a.csv",
+                "right": "b.csv", "output": "out.csv"}
+            }]})
+            with self.assertRaisesRegex(SpecError, "requires non-empty 'on'"):
+                load_pipeline(path)
+
 
 if __name__ == "__main__":
     unittest.main()

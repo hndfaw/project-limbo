@@ -18,13 +18,14 @@ class TaskSpec:
     """A single executable task in a Limbo pipeline."""
 
     id: str
-    command: str
+    command: Optional[str] = None
     needs: List[str] = field(default_factory=list)
     inputs: List[str] = field(default_factory=list)
     outputs: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
     cwd: Optional[str] = None
     timeout_seconds: Optional[float] = None
+    operator: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -98,10 +99,25 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
         raise SpecError(f"task at index {index} must be an object")
 
     task_id = _required_string(raw, "id", index)
-    command = _required_string(raw, "command", index)
+    command = raw.get("command")
+    operator = raw.get("operator")
+    if (command is None) == (operator is None):
+        raise SpecError(f"task {task_id!r}: specify exactly one of command or operator")
+    if command is not None and (not isinstance(command, str) or not command.strip()):
+        raise SpecError(f"task at index {index}: command must be a non-empty string")
+    if operator is not None:
+        from limbo.operators import validate_operator
+
+        operator = validate_operator(operator, task_id)
     needs = _string_list(raw.get("needs", []), "needs", index)
     inputs = _string_list(raw.get("inputs", []), "inputs", index)
     outputs = _string_list(raw.get("outputs", []), "outputs", index)
+    if operator is not None:
+        from limbo.operators import operator_paths
+
+        operator_inputs, operator_outputs = operator_paths(operator)
+        inputs = list(dict.fromkeys(inputs + operator_inputs))
+        outputs = list(dict.fromkeys(outputs + operator_outputs))
     env = _string_mapping(raw.get("env", {}), "env", index)
     cwd = raw.get("cwd")
     timeout_seconds = raw.get("timeout_seconds")
@@ -116,6 +132,7 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
     return TaskSpec(
         id=task_id,
         command=command,
+        operator=operator,
         needs=needs,
         inputs=inputs,
         outputs=outputs,

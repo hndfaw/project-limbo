@@ -11,7 +11,7 @@ from typing import Dict, Iterable, List
 from limbo.spec import TaskSpec
 
 
-FINGERPRINT_VERSION = 1
+FINGERPRINT_VERSION = 2
 
 
 def task_fingerprint(task: TaskSpec, pipeline_base: Path) -> str:
@@ -22,6 +22,7 @@ def task_fingerprint(task: TaskSpec, pipeline_base: Path) -> str:
         "version": FINGERPRINT_VERSION,
         "id": task.id,
         "command": task.command,
+        "operator": task.operator,
         "cwd": task.cwd or "",
         "env": dict(sorted(task.env.items())),
         "inputs": _input_digests(task.inputs, pipeline_base),

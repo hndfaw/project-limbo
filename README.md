@@ -11,6 +11,7 @@ Most useful automation starts small: a few scripts, a handful of files, and a RE
 ## Current Capabilities
 
 - JSON pipeline specs with explicit task dependencies.
+- Native JSONL and CSV filtering, projection, joins, and aggregation.
 - DAG validation for duplicate IDs, missing dependencies, and cycles.
 - Topological execution with parallel scheduling for independent tasks.
 - Content-addressed fingerprints based on task command, environment, declared inputs, declared outputs, and working directory.
@@ -46,13 +47,40 @@ Create a `limbo.json` file:
 Each task supports:
 
 - `id`: unique task identifier.
-- `command`: shell command to run.
+- `command`: shell command to run. Specify this or `operator`, but not both.
+- `operator`: built-in data operation that avoids invoking a shell.
 - `needs`: optional list of dependency task IDs.
 - `inputs`: optional file paths or glob patterns used for cache fingerprints.
 - `outputs`: optional file paths that must exist for a cached task to be reused.
 - `env`: optional environment variables for the task.
 - `cwd`: optional task working directory relative to the pipeline file.
 - `timeout_seconds`: optional timeout for the command.
+
+## Built-In Data Operators
+
+Operators use paths relative to the pipeline file and automatically declare those paths as cache inputs and outputs. Both `jsonl` and `csv` formats are supported. For example:
+
+```json
+{
+  "id": "active-users",
+  "operator": {
+    "type": "filter",
+    "format": "jsonl",
+    "input": "data/users.jsonl",
+    "output": "build/active.jsonl",
+    "where": {"field": "active", "equals": true}
+  }
+}
+```
+
+Available operator configurations are:
+
+- `filter`: `input`, `output`, and `where` containing `field` and `equals`.
+- `project`: `input`, `output`, and a non-empty `fields` list.
+- `join`: `left`, `right`, `output`, `on`, and optional `how` (`inner` or `left`). Colliding right-hand columns receive a `_right` suffix.
+- `aggregate`: `input`, `output`, optional `group_by`, and named `aggregations`. Aggregations support `count`, `sum`, `min`, `max`, and `avg`; all except `count` require a `field`.
+
+CSV values are strings when filtering. Numeric CSV and JSONL values are converted to numbers for aggregation. Outputs are written atomically so a failed operation does not leave a partial artifact.
 
 ## Usage
 

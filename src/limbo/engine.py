@@ -16,6 +16,7 @@ from limbo.cache import CacheEntry, TaskCache
 from limbo.errors import ExecutionError
 from limbo.fingerprint import outputs_exist, task_fingerprint
 from limbo.graph import downstream_tasks
+from limbo.operators import OperatorError, run_operator
 from limbo.spec import PipelineSpec, TaskSpec
 
 
@@ -196,17 +197,23 @@ class LocalExecutor:
         env.update(task.env)
 
         try:
-            completed = subprocess.run(
-                task.command,
-                cwd=str(cwd),
-                env=env,
-                shell=True,
-                text=True,
-                capture_output=True,
-                timeout=task.timeout_seconds,
-            )
-            stdout_path.write_text(completed.stdout, encoding="utf-8")
-            stderr_path.write_text(completed.stderr, encoding="utf-8")
+            if task.operator is not None:
+                count = run_operator(task.operator, pipeline.base_dir)
+                stdout_path.write_text(f"wrote {count} row(s)\n", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                completed = subprocess.CompletedProcess([], 0, "", "")
+            else:
+                completed = subprocess.run(
+                    task.command,
+                    cwd=str(cwd),
+                    env=env,
+                    shell=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=task.timeout_seconds,
+                )
+                stdout_path.write_text(completed.stdout, encoding="utf-8")
+                stderr_path.write_text(completed.stderr, encoding="utf-8")
         except subprocess.TimeoutExpired as exc:
             stdout_path.write_text(exc.stdout or "", encoding="utf-8")
             stderr_path.write_text((exc.stderr or "") + f"\nTask timed out after {task.timeout_seconds} seconds.\n", encoding="utf-8")
@@ -221,6 +228,11 @@ class LocalExecutor:
                 stderr_path=stderr_path,
                 reason="timeout",
             )
+
+        except OperatorError as exc:
+            stdout_path.write_text("", encoding="utf-8")
+            stderr_path.write_text(f"{exc}\n", encoding="utf-8")
+            completed = subprocess.CompletedProcess([], 1, "", str(exc))
 
         status = "succeeded" if completed.returncode == 0 else "failed"
         result = TaskResult(

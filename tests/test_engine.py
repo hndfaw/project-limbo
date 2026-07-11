@@ -121,6 +121,38 @@ class EngineTests(unittest.TestCase):
             with self.assertRaises(ExecutionError):
                 executor.run(pipeline)
 
+    def test_operator_executes_and_uses_cache(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            (base / "input.jsonl").write_text('{"id": 1}\n', encoding="utf-8")
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [{
+                "id": "project", "operator": {"type": "project", "format": "jsonl", "input": "input.jsonl",
+                "output": "output.jsonl", "fields": ["id"]}
+            }]})
+            executor = LocalExecutor(base / ".limbo", max_workers=1)
+
+            first = executor.run(pipeline)
+            second = executor.run(pipeline)
+
+            self.assertEqual("succeeded", first.results[0].status)
+            self.assertEqual("skipped", second.results[0].status)
+            self.assertEqual('{"id": 1}\n', (base / "output.jsonl").read_text(encoding="utf-8"))
+
+    def test_operator_data_error_is_a_task_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            (base / "input.jsonl").write_text("invalid\n", encoding="utf-8")
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [{
+                "id": "project", "operator": {"type": "project", "format": "jsonl", "input": "input.jsonl",
+                "output": "output.jsonl", "fields": ["id"]}
+            }]})
+
+            with self.assertRaisesRegex(ExecutionError, "project"):
+                LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+
+            stderr = next((base / ".limbo" / "runs").glob("*/project/stderr.log"))
+            self.assertIn("could not read", stderr.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
