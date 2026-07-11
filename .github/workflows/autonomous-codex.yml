@@ -49,6 +49,8 @@ jobs:
         run: npm install -g @openai/codex@latest
 
       - name: Autonomous implementation pass
+        id: codex-pass
+        continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +75,11 @@ jobs:
           args+=("You are maintaining Project Limbo autonomously. First run the tests. If tests fail, only fix the failing pipeline. If tests pass, inspect open GitHub issues, choose the next logical unblocked issue, implement it with focused code and exhaustive tests, then run the full test suite. Do not remove user work. Keep changes production-grade and commit-ready.")
 
           codex "${args[@]}"
+
+      - name: Warn on Codex failure
+        if: steps.codex-pass.outcome == 'failure'
+        run: |
+          echo "::warning title=Autonomous Codex skipped::The Codex step failed (likely due to an invalid or expired OPENAI_API_KEY). Autonomous maintenance was not performed. Check the OPENAI_API_KEY repository secret under Settings > Secrets and variables > Actions."
 
       - name: Verify after Codex
         run: PYTHONPATH=src python -m unittest discover -s tests
