@@ -12,6 +12,12 @@ into a distributed task scheduler). Product/architecture details live in
 
 ---
 
+## Prerequisites (assumed environment)
+
+- **Python 3.9+** on `PATH` as `python3`. The runtime and tests are **stdlib-only** — there is nothing to `pip install` to run the suite.
+- **`git`** configured, and **`gh`** (GitHub CLI) authenticated with `repo` + `workflow` scope on this repository, with permission to push and merge. Selecting the next task and merging PRs depend on `gh`.
+- **Zero-prompt operation:** if you are a Claude Code session, launch with `--dangerously-skip-permissions` (or ensure `.claude/settings.local.json` sets `permissions.defaultMode` to `bypassPermissions`) so you can work unattended. This does **not** silence the shell obfuscation check — see Environment rules below.
+
 ## The loop (do this every run, in order)
 
 1. **Sync:** `git checkout main && git pull --ff-only`.
