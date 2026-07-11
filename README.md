@@ -75,12 +75,45 @@ Operators use paths relative to the pipeline file and automatically declare thos
 
 Available operator configurations are:
 
-- `filter`: `input`, `output`, and `where` containing `field` and `equals`.
+- `filter`: `input`, `output`, and exactly one of `where` (an object with `field` and `equals`) or `expr` (a safe expression string; the row is kept when it is truthy).
 - `project`: `input`, `output`, and a non-empty `fields` list.
+- `rename`: `input`, `output`, and a `rename` map of `old -> new` field names. Two fields may not be renamed to the same name, and a rename that would collide with an existing field is rejected.
+- `derive`: `input`, `output`, and a `derived` map of `new_field -> expression`. Each expression is evaluated against the source record; derived fields are appended (or overwrite a same-named field). CSV columns are appended in declaration order.
 - `join`: `left`, `right`, `output`, `on`, and optional `how` (`inner` or `left`). Colliding right-hand columns receive a `_right` suffix.
 - `aggregate`: `input`, `output`, optional `group_by`, and named `aggregations`. Aggregations support `count`, `sum`, `min`, `max`, and `avg`; all except `count` require a `field`.
 
 CSV values are strings when filtering. Numeric CSV and JSONL values are converted to numbers for aggregation. Outputs are written atomically so a failed operation does not leave a partial artifact.
+
+### Safe expressions
+
+`filter` (via `expr`) and `derive` use a sandboxed expression evaluator built on Python's `ast` — never raw `eval`. Bare names resolve to fields of the current record; referencing an absent field is a task failure. Supported features:
+
+- literals, arithmetic (`+ - * / // % **`), comparisons (`== != < <= > >=`, chained), and membership (`in`, `not in`);
+- boolean logic (`and`, `or`, `not`) and conditional expressions (`x if cond else y`);
+- helper functions: `lower`, `upper`, `strip`, `len`, `abs`, `round`, `int`, `float`, `str`, `bool`, `min`, `max`, `startswith`, `endswith`, `contains`, and `coalesce`.
+
+Attribute access, subscripting, comprehensions, lambdas, and any unlisted function are rejected at load time. Because CSV values are strings, convert them explicitly, e.g. `float(amount) >= 80`.
+
+```json
+{
+  "id": "senior-actives",
+  "operator": {
+    "type": "filter",
+    "format": "jsonl",
+    "input": "data/users.jsonl",
+    "output": "build/seniors.jsonl",
+    "expr": "active and age >= 45"
+  }
+}
+```
+
+Runnable end-to-end examples live in [`examples/operators_jsonl.json`](examples/operators_jsonl.json) and [`examples/operators_csv.json`](examples/operators_csv.json), each chaining `filter -> derive -> rename -> aggregate` over the sample data in `examples/data/`:
+
+```bash
+cd examples
+PYTHONPATH=../src python -m limbo.cli run operators_jsonl.json
+PYTHONPATH=../src python -m limbo.cli run operators_csv.json
+```
 
 ## Usage
 
@@ -102,20 +135,22 @@ limbo run limbo.json
 
 ## Autonomous Development Loop
 
-This repository includes an opt-in GitHub Actions workflow at `.github/workflows/autonomous-codex.yml`. It is scheduled on a true 45-minute cadence and can also be started manually. The workflow is designed to:
+This repository includes an opt-in GitHub Actions workflow at `.github/workflows/autonomous-claude.yml`. It uses Anthropic's official [`claude-code-action`](https://github.com/anthropics/claude-code-action), is scheduled on a true 45-minute cadence, and can also be started manually. The workflow is designed to:
 
 1. Run the test suite first.
 2. Stop immediately if tests fail, preserving the rule that the next run must focus on fixing the pipeline.
-3. Ask Codex CLI to inspect open issues and implement the next logical ticket.
-4. Run tests again.
+3. Ask Claude Code to inspect open issues and implement the next logical ticket (without committing).
+4. Run tests again to verify the diff.
 5. Commit and push changes back to `main` when there is a verified diff.
 
-The workflow requires repository secrets before it can perform model-backed work:
+The workflow requires **one** of these repository secrets before it can perform model-backed work:
 
-- `OPENAI_API_KEY`: used by Codex CLI.
-- A `GITHUB_TOKEN` is provided automatically by GitHub Actions for repository writes when workflow permissions allow it.
+- `CLAUDE_CODE_OAUTH_TOKEN` (recommended): generated from a Claude subscription with `claude setup-token`, avoiding metered API billing.
+- `ANTHROPIC_API_KEY`: a key from [console.anthropic.com](https://console.anthropic.com), billed per token.
 
-The workflow is intentionally auditable: it fails loudly when `OPENAI_API_KEY` is missing, does not hide test failures, and each autonomous run produces normal Git history.
+A `GITHUB_TOKEN` is provided automatically by GitHub Actions for repository writes when workflow permissions allow it.
+
+The workflow is intentionally auditable: it fails loudly when no Claude credential is configured, does not hide test failures, keeps commit/push under the workflow's control rather than the model's, and each autonomous run produces normal Git history.
 
 ## Development
 
@@ -134,7 +169,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 ## Roadmap
 
 - Issue 1: Engine foundation, cache-aware execution, and CLI.
-- Issue 2: Built-in JSONL and CSV data operators.
+- Issue 2: Built-in JSONL and CSV data operators (filter, project, rename, derive, join, aggregate) with a safe expression evaluator.
 - Issue 3: Retry policies, failure classification, and resumable runs.
 - Issue 4: Remote worker protocol with signed task leases.
 - Issue 5: Artifact store abstraction for local disk, S3-compatible storage, and content-addressed blobs.

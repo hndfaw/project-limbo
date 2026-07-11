@@ -31,4 +31,4 @@ Each scheduled run should:
 
 ## Required Secret
 
-Autonomous runs require the repository secret `OPENAI_API_KEY`. The workflow fails immediately when the secret is missing so missing credentials cannot masquerade as a successful no-op run.
+Autonomous runs require one Claude credential: `CLAUDE_CODE_OAUTH_TOKEN` (recommended, from a Claude subscription via `claude setup-token`) or `ANTHROPIC_API_KEY`. The workflow fails immediately when neither secret is set so missing credentials cannot masquerade as a successful no-op run.

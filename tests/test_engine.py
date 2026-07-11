@@ -153,6 +153,53 @@ class EngineTests(unittest.TestCase):
             stderr = next((base / ".limbo" / "runs").glob("*/project/stderr.log"))
             self.assertIn("could not read", stderr.read_text(encoding="utf-8"))
 
+    def test_end_to_end_operator_pipeline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            (base / "sales.jsonl").write_text(
+                '{"team": "a", "amount": 2, "active": true}\n'
+                '{"team": "a", "amount": 8, "active": true}\n'
+                '{"team": "b", "amount": 5, "active": false}\n'
+                '{"team": "b", "amount": 9, "active": true}\n',
+                encoding="utf-8",
+            )
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "active", "operator": {"type": "filter", "format": "jsonl", "input": "sales.jsonl",
+                    "output": "active.jsonl", "expr": "active and amount >= 5"}},
+                {"id": "labelled", "needs": ["active"], "operator": {"type": "derive", "format": "jsonl",
+                    "input": "active.jsonl", "output": "labelled.jsonl",
+                    "derived": {"tier": "'high' if amount >= 8 else 'mid'"}}},
+                {"id": "renamed", "needs": ["labelled"], "operator": {"type": "rename", "format": "jsonl",
+                    "input": "labelled.jsonl", "output": "renamed.jsonl", "rename": {"amount": "value"}}},
+                {"id": "rollup", "needs": ["renamed"], "operator": {"type": "aggregate", "format": "jsonl",
+                    "input": "renamed.jsonl", "output": "rollup.jsonl", "group_by": ["team"],
+                    "aggregations": {"count": {"op": "count"}, "total": {"op": "sum", "field": "value"}}}},
+            ]})
+
+            result = LocalExecutor(base / ".limbo", max_workers=2).run(pipeline)
+
+            self.assertEqual(4, len(result.succeeded))
+            rollup = [json.loads(line) for line in (base / "rollup.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(
+                [{"team": "a", "count": 1, "total": 8}, {"team": "b", "count": 1, "total": 9}],
+                sorted(rollup, key=lambda row: row["team"]),
+            )
+
+    def test_expression_evaluation_error_is_a_task_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            (base / "input.jsonl").write_text('{"a": 1}\n', encoding="utf-8")
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [{
+                "id": "derive", "operator": {"type": "derive", "format": "jsonl", "input": "input.jsonl",
+                "output": "output.jsonl", "derived": {"b": "ghost + 1"}}
+            }]})
+
+            with self.assertRaisesRegex(ExecutionError, "derive"):
+                LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+
+            stderr = next((base / ".limbo" / "runs").glob("*/derive/stderr.log"))
+            self.assertIn("ghost", stderr.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

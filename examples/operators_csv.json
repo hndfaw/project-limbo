@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "big-deals",
+      "operator": {
+        "type": "filter",
+        "format": "csv",
+        "input": "data/sales.csv",
+        "output": "build/big.csv",
+        "expr": "float(amount) >= 80"
+      }
+    },
+    {
+      "id": "with-tax",
+      "needs": ["big-deals"],
+      "operator": {
+        "type": "derive",
+        "format": "csv",
+        "input": "build/big.csv",
+        "output": "build/taxed.csv",
+        "derived": {
+          "with_tax": "round(float(amount) * 1.1, 2)"
+        }
+      }
+    },
+    {
+      "id": "friendly-headers",
+      "needs": ["with-tax"],
+      "operator": {
+        "type": "rename",
+        "format": "csv",
+        "input": "build/taxed.csv",
+        "output": "build/report.csv",
+        "rename": {"rep": "salesperson", "amount": "net"}
+      }
+    },
+    {
+      "id": "by-region",
+      "needs": ["friendly-headers"],
+      "operator": {
+        "type": "aggregate",
+        "format": "csv",
+        "input": "build/report.csv",
+        "output": "build/region_totals.csv",
+        "group_by": ["region"],
+        "aggregations": {
+          "deals": {"op": "count"},
+          "gross": {"op": "sum", "field": "with_tax"}
+        }
+      }
+    }
+  ]
+}
