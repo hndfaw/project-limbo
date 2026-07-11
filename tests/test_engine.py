@@ -185,6 +185,109 @@ class EngineTests(unittest.TestCase):
                 sorted(rollup, key=lambda row: row["team"]),
             )
 
+    def test_retry_recovers_from_transient_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            # Fails on the first two attempts, succeeds on the third.
+            command = ("n=$(cat n.txt 2>/dev/null || echo 0); n=$((n+1)); "
+                       "echo $n > n.txt; test $n -ge 3")
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [{
+                "id": "flaky", "command": command, "outputs": ["n.txt"],
+                "retry": {"max_attempts": 3, "delay_seconds": 0}
+            }]})
+
+            result = LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+
+            flaky = result.results[0]
+            self.assertEqual("succeeded", flaky.status)
+            self.assertEqual(3, len(flaky.attempts))
+            self.assertEqual(["failed", "failed", "succeeded"], [a.status for a in flaky.attempts])
+
+    def test_non_retryable_exit_code_fails_immediately(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [{
+                "id": "boom", "command": "exit 1", "outputs": [],
+                # Only exit code 2 is retryable, so exit 1 fails on the first attempt.
+                "retry": {"max_attempts": 5, "delay_seconds": 0, "retry_on_exit_codes": [2]}
+            }]})
+
+            with self.assertRaises(ExecutionError):
+                LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+
+            manifest = json.loads((next((base / ".limbo" / "runs").glob("*/manifest.json"))).read_text())
+            boom = next(r for r in manifest["results"] if r["task_id"] == "boom")
+            self.assertEqual("failed", boom["status"])
+            self.assertEqual(1, len(boom["attempts"]))
+
+    def test_manifest_records_pipeline_and_attempts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "ok", "command": "echo hi > ok.txt", "outputs": ["ok.txt"]},
+            ]})
+
+            result = LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+
+            manifest = json.loads((base / ".limbo" / "runs" / result.run_id / "manifest.json").read_text())
+            self.assertEqual(str((base / "limbo.json").resolve()), manifest["pipeline"])
+            self.assertIsNone(manifest["resumed_from"])
+            self.assertEqual(1, len(manifest["results"][0]["attempts"]))
+
+    def test_resume_carries_success_and_reruns_failed_and_blocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            # b fails until gate.txt exists; c depends on b and is blocked on the first run.
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "a", "command": "echo a > a.txt", "outputs": ["a.txt"]},
+                {"id": "b", "needs": ["a"], "command": "test -f gate.txt && echo b > b.txt",
+                 "outputs": ["b.txt"]},
+                {"id": "c", "needs": ["b"], "command": "echo c > c.txt", "outputs": ["c.txt"]},
+            ]})
+            executor = LocalExecutor(base / ".limbo", max_workers=1)
+
+            with self.assertRaises(ExecutionError):
+                executor.run(pipeline)
+            run_id = next((base / ".limbo" / "runs").iterdir()).name
+            self.assertTrue((base / "a.txt").exists())
+            self.assertFalse((base / "c.txt").exists())
+
+            # Satisfy the gate, then resume: a is carried (cache), b reruns, c runs.
+            (base / "gate.txt").write_text("go", encoding="utf-8")
+            resumed = executor.resume(run_id)
+
+            statuses = {r.task_id: r.status for r in resumed.results}
+            self.assertEqual("skipped", statuses["a"])
+            self.assertEqual("succeeded", statuses["b"])
+            self.assertEqual("succeeded", statuses["c"])
+            self.assertEqual(run_id, resumed.resumed_from)
+            self.assertTrue((base / "c.txt").exists())
+
+    def test_resume_unknown_run_id_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            with self.assertRaisesRegex(ExecutionError, "no run found"):
+                LocalExecutor(base / ".limbo", max_workers=1).resume("does-not-exist")
+
+    def test_failure_summary_includes_attempts_and_blocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "b", "command": "exit 1", "outputs": [],
+                 "retry": {"max_attempts": 2, "delay_seconds": 0}},
+                {"id": "c", "needs": ["b"], "command": "echo c", "outputs": []},
+            ]})
+
+            try:
+                LocalExecutor(base / ".limbo", max_workers=1).run(pipeline)
+                self.fail("expected ExecutionError")
+            except ExecutionError as exc:
+                summary = exc.run_result.failure_summary()
+
+            self.assertIn("b: exit code 1 after 2 attempt(s)", summary)
+            self.assertIn("attempt 1: failed", summary)
+            self.assertIn("c: blocked", summary)
+
     def test_expression_evaluation_error_is_a_task_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)

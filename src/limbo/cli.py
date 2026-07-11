@@ -36,8 +36,14 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             result = executor.run(pipeline, force=args.force, dry_run=args.dry_run)
             _print_run(result, json_output=args.json)
             return 0
+        if args.command == "resume":
+            executor = LocalExecutor(Path(args.state_dir), max_workers=args.max_workers)
+            result = executor.resume(args.run_id, force=args.force)
+            _print_run(result, json_output=args.json)
+            return 0
     except ExecutionError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        _print_failure_summary(exc, json_output=getattr(args, "json", False))
         return 2
     except LimboError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -60,6 +66,13 @@ def _parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="execute a pipeline")
     _common(run)
     run.add_argument("--dry-run", action="store_true", help="produce the run plan without executing commands")
+
+    resume = subparsers.add_parser("resume", help="resume a prior run, re-executing only incomplete work")
+    resume.add_argument("run_id", help="id of the run to resume (see .limbo/runs)")
+    resume.add_argument("--state-dir", default=".limbo", help="directory for cache and run metadata")
+    resume.add_argument("--max-workers", type=int, default=None, help="maximum parallel tasks")
+    resume.add_argument("--force", action="store_true", help="ignore cached successful tasks")
+    resume.add_argument("--json", action="store_true", help="emit machine-readable JSON")
 
     return parser
 
@@ -117,10 +130,32 @@ def _print_run(result: RunResult, json_output: bool) -> None:
         )
         return
 
-    print(f"run {result.run_id}")
+    header = f"run {result.run_id}"
+    if result.resumed_from:
+        header += f" (resumed from {result.resumed_from})"
+    print(header)
     for item in result.results:
-        detail = f" ({item.reason})" if item.reason else ""
+        notes = []
+        if item.reason:
+            notes.append(item.reason)
+        if len(item.attempts) > 1:
+            notes.append(f"{len(item.attempts)} attempts")
+        detail = f" ({', '.join(notes)})" if notes else ""
         print(f"  {item.task_id}: {item.status}{detail}")
+
+
+def _print_failure_summary(exc: ExecutionError, json_output: bool) -> None:
+    run_result = getattr(exc, "run_result", None)
+    if run_result is None:
+        return
+    summary = run_result.failure_summary()
+    if not summary:
+        return
+    if json_output:
+        return
+    print("failure summary:", file=sys.stderr)
+    for line in summary.splitlines():
+        print(f"  {line}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -115,6 +115,43 @@ PYTHONPATH=../src python -m limbo.cli run operators_jsonl.json
 PYTHONPATH=../src python -m limbo.cli run operators_csv.json
 ```
 
+## Reliability: Retries and Resumable Runs
+
+Any task may declare a `retry` policy so transient failures are handled without rerunning the whole pipeline:
+
+```json
+{
+  "id": "fetch",
+  "command": "curl -f https://example.com/data > build/data.json",
+  "outputs": ["build/data.json"],
+  "retry": {
+    "max_attempts": 3,
+    "backoff": "exponential",
+    "delay_seconds": 0.5,
+    "max_delay_seconds": 30,
+    "retry_on_exit_codes": [1, 7],
+    "retry_on_timeout": true
+  }
+}
+```
+
+- `max_attempts` (default `1`): total attempts including the first; `1` disables retries.
+- `backoff` (default `fixed`): `fixed`, `linear`, or `exponential` growth of the delay between attempts.
+- `delay_seconds` (default `0`) and optional `max_delay_seconds`: base delay and an upper bound.
+- `retry_on_exit_codes` (default: any non-zero): restrict retries to specific exit codes.
+- `retry_on_timeout` (default `true`): whether a timeout is retryable.
+
+Every attempt is recorded in the run manifest (`.limbo/runs/<run-id>/manifest.json`) with its status, exit code, and duration. When a run fails, the CLI prints a failure summary explaining the final cause and the attempt history, and lists tasks blocked by the failure.
+
+Runs are resumable. Because successful tasks are cached deterministically, resuming re-executes only failed, blocked, or never-run tasks whose dependencies are now satisfied — succeeded work is carried forward unchanged:
+
+```bash
+limbo run limbo.json        # fails partway through
+limbo resume <run-id>       # restarts only the incomplete work
+```
+
+Retry configuration deliberately does not affect a task's fingerprint, so caches stay deterministic across retries and resumes.
+
 ## Usage
 
 Run from a checkout:
@@ -123,6 +160,7 @@ Run from a checkout:
 PYTHONPATH=src python -m limbo.cli validate limbo.json
 PYTHONPATH=src python -m limbo.cli plan limbo.json
 PYTHONPATH=src python -m limbo.cli run limbo.json
+PYTHONPATH=src python -m limbo.cli resume <run-id>
 ```
 
 After installation:
@@ -131,6 +169,7 @@ After installation:
 limbo validate limbo.json
 limbo plan limbo.json
 limbo run limbo.json
+limbo resume <run-id>
 ```
 
 ## Autonomous Development Loop
@@ -170,7 +209,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 
 - Issue 1: Engine foundation, cache-aware execution, and CLI.
 - Issue 2: Built-in JSONL and CSV data operators (filter, project, rename, derive, join, aggregate) with a safe expression evaluator.
-- Issue 3: Retry policies, failure classification, and resumable runs.
+- Issue 3: Retry policies (backoff, retryable exit codes/timeouts), attempt history in manifests, failure summaries, and `limbo resume`.
 - Issue 4: Remote worker protocol with signed task leases.
 - Issue 5: Artifact store abstraction for local disk, S3-compatible storage, and content-addressed blobs.
 - Issue 6: Metrics, traces, and run visualization.

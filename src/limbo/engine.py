@@ -10,7 +10,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from limbo.cache import CacheEntry, TaskCache
 from limbo.errors import ExecutionError
@@ -18,6 +18,22 @@ from limbo.fingerprint import outputs_exist, task_fingerprint
 from limbo.graph import downstream_tasks
 from limbo.operators import OperatorError, run_operator
 from limbo.spec import PipelineSpec, TaskSpec
+
+
+@dataclass(frozen=True)
+class AttemptResult:
+    """The outcome of a single execution attempt for a task."""
+
+    number: int
+    status: str
+    started_at: float
+    finished_at: float
+    returncode: Optional[int] = None
+    reason: Optional[str] = None
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.finished_at - self.started_at
 
 
 @dataclass(frozen=True)
@@ -31,6 +47,7 @@ class TaskResult:
     stdout_path: Optional[Path] = None
     stderr_path: Optional[Path] = None
     reason: Optional[str] = None
+    attempts: Tuple[AttemptResult, ...] = ()
 
     @property
     def duration_seconds(self) -> float:
@@ -41,10 +58,15 @@ class TaskResult:
 class RunResult:
     run_id: str
     results: List[TaskResult]
+    resumed_from: Optional[str] = None
 
     @property
     def failed(self) -> List[TaskResult]:
         return [result for result in self.results if result.status == "failed"]
+
+    @property
+    def blocked(self) -> List[TaskResult]:
+        return [result for result in self.results if result.status == "blocked"]
 
     @property
     def skipped(self) -> List[TaskResult]:
@@ -53,6 +75,25 @@ class RunResult:
     @property
     def succeeded(self) -> List[TaskResult]:
         return [result for result in self.results if result.status == "succeeded"]
+
+    def failure_summary(self) -> str:
+        """Human-readable explanation of final failures and their attempt history."""
+
+        lines: List[str] = []
+        for result in self.failed:
+            attempts = result.attempts or ()
+            detail = result.reason or (
+                f"exit code {result.returncode}" if result.returncode is not None else "failed"
+            )
+            lines.append(f"{result.task_id}: {detail} after {max(1, len(attempts))} attempt(s)")
+            for attempt in attempts:
+                outcome = attempt.reason or (
+                    f"exit code {attempt.returncode}" if attempt.returncode is not None else attempt.status
+                )
+                lines.append(f"    attempt {attempt.number}: {attempt.status} ({outcome})")
+        for result in self.blocked:
+            lines.append(f"{result.task_id}: blocked ({result.reason})")
+        return "\n".join(lines)
 
 
 class LocalExecutor:
@@ -76,7 +117,8 @@ class LocalExecutor:
                 status[task.id] = "pending"
         return status
 
-    def run(self, pipeline: PipelineSpec, force: bool = False, dry_run: bool = False) -> RunResult:
+    def run(self, pipeline: PipelineSpec, force: bool = False, dry_run: bool = False,
+            resumed_from: Optional[str] = None) -> RunResult:
         """Run a pipeline with dependency-aware local scheduling."""
 
         run_id = _run_id()
@@ -96,17 +138,51 @@ class LocalExecutor:
                 )
                 for task in pipeline.tasks
             ]
-            return RunResult(run_id=run_id, results=results)
+            return RunResult(run_id=run_id, results=results, resumed_from=resumed_from)
 
         results = self._run_graph(pipeline, run_id, run_dir, force)
-        run_result = RunResult(run_id=run_id, results=results)
-        self._write_manifest(run_dir, run_result)
+        run_result = RunResult(run_id=run_id, results=results, resumed_from=resumed_from)
+        self._write_manifest(run_dir, run_result, pipeline)
 
         if run_result.failed:
             failed_ids = ", ".join(result.task_id for result in run_result.failed)
-            raise ExecutionError(f"pipeline failed: {failed_ids}")
+            raise ExecutionError(f"pipeline failed: {failed_ids}", run_result=run_result)
 
         return run_result
+
+    def resume(self, run_id: str, force: bool = False) -> RunResult:
+        """Resume a prior run, re-executing only incomplete or failed work.
+
+        The prior run's manifest supplies the pipeline path; previously
+        succeeded tasks are carried forward through the deterministic cache,
+        so only failed, blocked, or never-run tasks (whose dependencies are
+        satisfied) execute again.
+        """
+
+        manifest = self._read_manifest(run_id)
+        pipeline_path = manifest.get("pipeline")
+        if not pipeline_path:
+            raise ExecutionError(f"run {run_id!r} manifest does not record a pipeline path to resume")
+        path = Path(pipeline_path)
+        if not path.exists():
+            raise ExecutionError(f"cannot resume run {run_id!r}: pipeline {pipeline_path} no longer exists")
+
+        from limbo.spec import load_pipeline
+
+        pipeline = load_pipeline(path)
+        return self.run(pipeline, force=force, resumed_from=run_id)
+
+    def _read_manifest(self, run_id: str) -> Dict[str, object]:
+        manifest_path = self.state_dir / "runs" / run_id / "manifest.json"
+        if not manifest_path.exists():
+            raise ExecutionError(f"no run found with id {run_id!r} under {self.state_dir}")
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise ExecutionError(f"could not read manifest for run {run_id!r}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ExecutionError(f"manifest for run {run_id!r} is malformed")
+        return raw
 
     def _run_graph(self, pipeline: PipelineSpec, run_id: str, run_dir: Path, force: bool) -> List[TaskResult]:
         tasks_by_id = pipeline.task_map
@@ -192,6 +268,58 @@ class LocalExecutor:
         task_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = task_dir / "stdout.log"
         stderr_path = task_dir / "stderr.log"
+
+        policy = task.retry
+        attempts: List[AttemptResult] = []
+        returncode: Optional[int] = None
+        reason: Optional[str] = None
+
+        for attempt_number in range(1, policy.max_attempts + 1):
+            attempt_started = time.time()
+            returncode, timed_out, reason = self._execute_attempt(task, pipeline, stdout_path, stderr_path)
+            attempt_status = "succeeded" if returncode == 0 else "failed"
+            attempts.append(
+                AttemptResult(
+                    number=attempt_number,
+                    status=attempt_status,
+                    started_at=attempt_started,
+                    finished_at=time.time(),
+                    returncode=returncode,
+                    reason=reason,
+                )
+            )
+            if attempt_status == "succeeded":
+                break
+            has_more = attempt_number < policy.max_attempts
+            if not (has_more and policy.is_retryable(returncode, timed_out)):
+                break
+            delay = policy.delay_for(attempt_number)
+            if delay > 0:
+                time.sleep(delay)
+
+        status = "succeeded" if returncode == 0 else "failed"
+        result = TaskResult(
+            task_id=task.id,
+            status=status,
+            fingerprint=fingerprint,
+            started_at=started_at,
+            finished_at=time.time(),
+            returncode=returncode,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            reason=reason if status == "failed" else None,
+            attempts=tuple(attempts),
+        )
+
+        if status == "succeeded":
+            self.cache.put(CacheEntry(task.id, fingerprint, "succeeded", run_id))
+
+        return result
+
+    def _execute_attempt(self, task: TaskSpec, pipeline: PipelineSpec, stdout_path: Path,
+                         stderr_path: Path) -> Tuple[Optional[int], bool, Optional[str]]:
+        """Run a task once, write its logs, and report (returncode, timed_out, reason)."""
+
         cwd = _task_cwd(pipeline.base_dir, task)
         env = os.environ.copy()
         env.update(task.env)
@@ -201,59 +329,34 @@ class LocalExecutor:
                 count = run_operator(task.operator, pipeline.base_dir)
                 stdout_path.write_text(f"wrote {count} row(s)\n", encoding="utf-8")
                 stderr_path.write_text("", encoding="utf-8")
-                completed = subprocess.CompletedProcess([], 0, "", "")
-            else:
-                completed = subprocess.run(
-                    task.command,
-                    cwd=str(cwd),
-                    env=env,
-                    shell=True,
-                    text=True,
-                    capture_output=True,
-                    timeout=task.timeout_seconds,
-                )
-                stdout_path.write_text(completed.stdout, encoding="utf-8")
-                stderr_path.write_text(completed.stderr, encoding="utf-8")
+                return 0, False, None
+            completed = subprocess.run(
+                task.command,
+                cwd=str(cwd),
+                env=env,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=task.timeout_seconds,
+            )
+            stdout_path.write_text(completed.stdout, encoding="utf-8")
+            stderr_path.write_text(completed.stderr, encoding="utf-8")
+            reason = None if completed.returncode == 0 else f"exit code {completed.returncode}"
+            return completed.returncode, False, reason
         except subprocess.TimeoutExpired as exc:
             stdout_path.write_text(exc.stdout or "", encoding="utf-8")
             stderr_path.write_text((exc.stderr or "") + f"\nTask timed out after {task.timeout_seconds} seconds.\n", encoding="utf-8")
-            return TaskResult(
-                task_id=task.id,
-                status="failed",
-                fingerprint=fingerprint,
-                started_at=started_at,
-                finished_at=time.time(),
-                returncode=None,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                reason="timeout",
-            )
-
+            return None, True, "timeout"
         except OperatorError as exc:
             stdout_path.write_text("", encoding="utf-8")
             stderr_path.write_text(f"{exc}\n", encoding="utf-8")
-            completed = subprocess.CompletedProcess([], 1, "", str(exc))
+            return 1, False, str(exc)
 
-        status = "succeeded" if completed.returncode == 0 else "failed"
-        result = TaskResult(
-            task_id=task.id,
-            status=status,
-            fingerprint=fingerprint,
-            started_at=started_at,
-            finished_at=time.time(),
-            returncode=completed.returncode,
-            stdout_path=stdout_path,
-            stderr_path=stderr_path,
-        )
-
-        if status == "succeeded":
-            self.cache.put(CacheEntry(task.id, fingerprint, "succeeded", run_id))
-
-        return result
-
-    def _write_manifest(self, run_dir: Path, run_result: RunResult) -> None:
+    def _write_manifest(self, run_dir: Path, run_result: RunResult, pipeline: PipelineSpec) -> None:
         payload = {
             "run_id": run_result.run_id,
+            "resumed_from": run_result.resumed_from,
+            "pipeline": str(pipeline.source_path) if pipeline.source_path else None,
             "results": [
                 {
                     "task_id": result.task_id,
@@ -264,6 +367,16 @@ class LocalExecutor:
                     "stdout_path": str(result.stdout_path) if result.stdout_path else None,
                     "stderr_path": str(result.stderr_path) if result.stderr_path else None,
                     "reason": result.reason,
+                    "attempts": [
+                        {
+                            "number": attempt.number,
+                            "status": attempt.status,
+                            "returncode": attempt.returncode,
+                            "reason": attempt.reason,
+                            "duration_seconds": attempt.duration_seconds,
+                        }
+                        for attempt in result.attempts
+                    ],
                 }
                 for result in run_result.results
             ],
