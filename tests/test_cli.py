@@ -67,6 +67,38 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", result.stderr)
 
 
+    def test_cli_resume_after_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            state = base / ".limbo"
+            spec = base / "limbo.json"
+            spec.write_text(
+                json.dumps({"version": 1, "tasks": [
+                    {"id": "gate", "command": "test -f gate.txt && echo ok > gate_done.txt",
+                     "outputs": ["gate_done.txt"]},
+                ]}),
+                encoding="utf-8",
+            )
+
+            first = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "run", str(spec), "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(2, first.returncode)
+            self.assertIn("failure summary:", first.stderr)
+
+            run_id = next((state / "runs").iterdir()).name
+            (base / "gate.txt").write_text("go", encoding="utf-8")
+
+            resumed = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "resume", run_id, "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, resumed.returncode, resumed.stderr)
+            self.assertIn(f"resumed from {run_id}", resumed.stdout)
+            self.assertTrue((base / "gate_done.txt").exists())
+
+
 def _env():
     env = os.environ.copy()
     existing = env.get("PYTHONPATH")

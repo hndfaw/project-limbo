@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from limbo.errors import SpecError
+from limbo.retry import RetryPolicy, parse_retry_policy
 
 
 SUPPORTED_VERSION = 1
@@ -26,6 +27,7 @@ class TaskSpec:
     cwd: Optional[str] = None
     timeout_seconds: Optional[float] = None
     operator: Optional[Dict[str, Any]] = None
+    retry: RetryPolicy = field(default_factory=RetryPolicy)
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class PipelineSpec:
     version: int
     tasks: List[TaskSpec]
     base_dir: Path
+    source_path: Optional[Path] = None
 
     @property
     def task_map(self) -> Dict[str, TaskSpec]:
@@ -64,7 +67,7 @@ def load_pipeline(path: Path) -> PipelineSpec:
         raise SpecError("pipeline must contain a non-empty tasks list")
 
     tasks = [_parse_task(item, index) for index, item in enumerate(tasks_raw)]
-    pipeline = PipelineSpec(version=version, tasks=tasks, base_dir=path.parent)
+    pipeline = PipelineSpec(version=version, tasks=tasks, base_dir=path.parent, source_path=path)
     validate_pipeline(pipeline)
     return pipeline
 
@@ -129,6 +132,8 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
             raise SpecError(f"task {task_id!r}: timeout_seconds must be a positive number")
         timeout_seconds = float(timeout_seconds)
 
+    retry = parse_retry_policy(raw.get("retry"), task_id)
+
     return TaskSpec(
         id=task_id,
         command=command,
@@ -139,6 +144,7 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
         env=env,
         cwd=cwd,
         timeout_seconds=timeout_seconds,
+        retry=retry,
     )
 
 

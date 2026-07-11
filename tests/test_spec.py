@@ -148,6 +148,34 @@ class SpecTests(unittest.TestCase):
             with self.assertRaisesRegex(SpecError, "unknown function"):
                 load_pipeline(path)
 
+    def test_loads_retry_policy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "t", "command": "true",
+                "retry": {"max_attempts": 3, "backoff": "exponential", "delay_seconds": 1}
+            }]})
+
+            task = load_pipeline(path).tasks[0]
+
+            self.assertEqual(3, task.retry.max_attempts)
+            self.assertEqual("exponential", task.retry.backoff)
+
+    def test_default_retry_is_single_attempt(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "t", "command": "true"
+            }]})
+
+            self.assertEqual(1, load_pipeline(path).tasks[0].retry.max_attempts)
+
+    def test_rejects_bad_retry_policy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "t", "command": "true", "retry": {"max_attempts": 0}
+            }]})
+            with self.assertRaisesRegex(SpecError, "max_attempts"):
+                load_pipeline(path)
+
     def test_rejects_rename_target_collision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = self.write_spec(tmpdir, {"version": 1, "tasks": [{

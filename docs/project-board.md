@@ -5,18 +5,18 @@ GitHub Issues are the source of truth for autonomous work selection. The connect
 ## Done
 
 - [#1 Bootstrap engine foundation, CLI, cache, and CI](https://github.com/hndfaw/project-limbo/issues/1)
+- [#2 Add native JSONL and CSV pipeline stages](https://github.com/hndfaw/project-limbo/issues/2)
+- [#3 Add retry policies and resumable runs](https://github.com/hndfaw/project-limbo/issues/3)
 
 ## Ready
 
-- [#2 Add native JSONL and CSV pipeline stages](https://github.com/hndfaw/project-limbo/issues/2)
-- [#3 Add retry policies and resumable runs](https://github.com/hndfaw/project-limbo/issues/3)
+- [#4 Design and implement remote worker lease protocol](https://github.com/hndfaw/project-limbo/issues/4) (reliability foundation now in place)
 - [#5 Add content-addressed artifact store abstraction](https://github.com/hndfaw/project-limbo/issues/5)
 - [#6 Add metrics, event stream, and timeline reports](https://github.com/hndfaw/project-limbo/issues/6)
 - [#7 Add command policy, secret redaction, and sandbox profiles](https://github.com/hndfaw/project-limbo/issues/7)
 
 ## Blocked
 
-- [#4 Design and implement remote worker lease protocol](https://github.com/hndfaw/project-limbo/issues/4), blocked by reliability work.
 - [#8 Build durable distributed scheduler service](https://github.com/hndfaw/project-limbo/issues/8), blocked by worker, artifact, observability, and policy foundations.
 
 ## Autonomous Selection Rule
