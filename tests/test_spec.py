@@ -117,6 +117,46 @@ class SpecTests(unittest.TestCase):
             with self.assertRaisesRegex(SpecError, "requires non-empty 'on'"):
                 load_pipeline(path)
 
+    def test_loads_derive_operator(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "derive", "operator": {"type": "derive", "format": "jsonl", "input": "in.jsonl",
+                "output": "out.jsonl", "derived": {"total": "price * qty"}}
+            }]})
+
+            task = load_pipeline(path).tasks[0]
+
+            self.assertEqual("derive", task.operator["type"])
+            self.assertEqual(["in.jsonl"], task.inputs)
+            self.assertEqual(["out.jsonl"], task.outputs)
+
+    def test_rejects_filter_with_both_where_and_expr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "bad", "operator": {"type": "filter", "format": "jsonl", "input": "in.jsonl",
+                "output": "out.jsonl", "where": {"field": "a", "equals": 1}, "expr": "a == 1"}
+            }]})
+            with self.assertRaisesRegex(SpecError, "exactly one of 'where' or 'expr'"):
+                load_pipeline(path)
+
+    def test_rejects_invalid_expression_at_load_time(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "bad", "operator": {"type": "derive", "format": "jsonl", "input": "in.jsonl",
+                "output": "out.jsonl", "derived": {"x": "__import__('os')"}}
+            }]})
+            with self.assertRaisesRegex(SpecError, "unknown function"):
+                load_pipeline(path)
+
+    def test_rejects_rename_target_collision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self.write_spec(tmpdir, {"version": 1, "tasks": [{
+                "id": "bad", "operator": {"type": "rename", "format": "jsonl", "input": "in.jsonl",
+                "output": "out.jsonl", "rename": {"a": "x", "b": "x"}}
+            }]})
+            with self.assertRaisesRegex(SpecError, "same name"):
+                load_pipeline(path)
+
 
 if __name__ == "__main__":
     unittest.main()

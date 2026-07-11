@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from limbo.errors import LimboError, SpecError
+from limbo.expressions import ExpressionError, compile_expression
 
 
 class OperatorError(LimboError):
@@ -23,13 +24,14 @@ def validate_operator(value: Any, task_id: str) -> Dict[str, Any]:
         raise SpecError(f"task {task_id!r}: operator must be an object")
     config = dict(value)
     kind = config.get("type")
-    if kind not in {"filter", "project", "join", "aggregate"}:
+    if kind not in {"filter", "project", "rename", "derive", "join", "aggregate"}:
         raise SpecError(f"task {task_id!r}: unsupported operator type {kind!r}")
     if config.get("format") not in {"jsonl", "csv"}:
         raise SpecError(f"task {task_id!r}: operator format must be 'jsonl' or 'csv'")
 
-    required = {"join": ("left", "right", "output"), "filter": ("input", "output", "where"),
-                "project": ("input", "output", "fields"), "aggregate": ("input", "output", "aggregations")}[kind]
+    required = {"join": ("left", "right", "output"), "filter": ("input", "output"),
+                "project": ("input", "output", "fields"), "aggregate": ("input", "output", "aggregations"),
+                "rename": ("input", "output", "rename"), "derive": ("input", "output", "derived")}[kind]
     for field in required:
         if field not in config:
             raise SpecError(f"task {task_id!r}: {kind} operator requires {field!r}")
@@ -38,11 +40,36 @@ def validate_operator(value: Any, task_id: str) -> Dict[str, Any]:
             raise SpecError(f"task {task_id!r}: operator {field} must be a non-empty string")
 
     if kind == "filter":
-        where = config["where"]
-        if not isinstance(where, Mapping) or not isinstance(where.get("field"), str) or "equals" not in where:
-            raise SpecError(f"task {task_id!r}: where requires field and equals")
+        has_where = "where" in config
+        has_expr = "expr" in config
+        if has_where == has_expr:
+            raise SpecError(f"task {task_id!r}: filter requires exactly one of 'where' or 'expr'")
+        if has_where:
+            where = config["where"]
+            if not isinstance(where, Mapping) or not isinstance(where.get("field"), str) or "equals" not in where:
+                raise SpecError(f"task {task_id!r}: where requires field and equals")
+        else:
+            _validate_expr(config["expr"], task_id, "expr")
     elif kind == "project":
         _string_list(config["fields"], task_id, "fields", allow_empty=False)
+    elif kind == "rename":
+        mapping = config["rename"]
+        if not isinstance(mapping, Mapping) or not mapping:
+            raise SpecError(f"task {task_id!r}: rename must be a non-empty object")
+        for old, new in mapping.items():
+            if not isinstance(old, str) or not old or not isinstance(new, str) or not new:
+                raise SpecError(f"task {task_id!r}: rename keys and values must be non-empty strings")
+        targets = list(mapping.values())
+        if len(set(targets)) != len(targets):
+            raise SpecError(f"task {task_id!r}: rename maps multiple fields to the same name")
+    elif kind == "derive":
+        derived = config["derived"]
+        if not isinstance(derived, Mapping) or not derived:
+            raise SpecError(f"task {task_id!r}: derived must be a non-empty object")
+        for name, expression in derived.items():
+            if not isinstance(name, str) or not name:
+                raise SpecError(f"task {task_id!r}: derived field names must be non-empty strings")
+            _validate_expr(expression, task_id, f"derived[{name}]")
     elif kind == "join":
         if not isinstance(config.get("on"), str) or not config["on"]:
             raise SpecError(f"task {task_id!r}: join operator requires non-empty 'on'")
@@ -84,11 +111,29 @@ def run_operator(config: Mapping[str, Any], base_dir: Path) -> int:
     else:
         source = _read(config["input"], config["format"], base_dir)
         if kind == "filter":
-            rows = [row for row in source if row.get(config["where"]["field"]) == config["where"]["equals"]]
+            if "expr" in config:
+                predicate = compile_expression(config["expr"])
+                rows = _guard_expression(lambda: [row for row in source if predicate.matches(row)])
+            else:
+                rows = [row for row in source if row.get(config["where"]["field"]) == config["where"]["equals"]]
             fields = _csv_fields(config["input"], base_dir) if config["format"] == "csv" else None
         elif kind == "project":
             rows = [{field: row.get(field) for field in config["fields"]} for row in source]
             fields = config["fields"]
+        elif kind == "rename":
+            mapping = config["rename"]
+            rows = [_apply_rename(row, mapping) for row in source]
+            if config["format"] == "csv":
+                input_fields = _csv_fields(config["input"], base_dir)
+                fields = [mapping.get(field, field) for field in input_fields]
+                if len(set(fields)) != len(fields):
+                    raise OperatorError(f"rename produces duplicate column(s) in {config['output']!r}")
+        elif kind == "derive":
+            compiled = {name: compile_expression(expression) for name, expression in config["derived"].items()}
+            rows = _guard_expression(lambda: _derive(source, compiled))
+            if config["format"] == "csv":
+                input_fields = _csv_fields(config["input"], base_dir)
+                fields = input_fields + [name for name in config["derived"] if name not in input_fields]
         else:
             rows = _aggregate(source, config)
             fields = list(config.get("group_by", [])) + list(config["aggregations"])
@@ -193,6 +238,44 @@ def _aggregate(rows: Iterable[Dict[str, Any]], config: Mapping[str, Any]) -> Lis
             output[name] = int(value) if value.is_integer() else value
         result.append(output)
     return result
+
+
+def _apply_rename(row: Mapping[str, Any], mapping: Mapping[str, str]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for key, value in row.items():
+        new_key = mapping.get(key, key)
+        if new_key in result:
+            raise OperatorError(f"rename produced duplicate field {new_key!r}")
+        result[new_key] = value
+    return result
+
+
+def _derive(rows: Iterable[Mapping[str, Any]], compiled: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    result = []
+    for row in rows:
+        derived = dict(row)
+        for name, expression in compiled.items():
+            derived[name] = expression.evaluate(row)
+        result.append(derived)
+    return result
+
+
+def _guard_expression(action):
+    """Run an expression-driven callable, mapping evaluation errors to OperatorError."""
+
+    try:
+        return action()
+    except ExpressionError as exc:
+        raise OperatorError(str(exc)) from exc
+
+
+def _validate_expr(value: Any, task_id: str, label: str) -> None:
+    if not isinstance(value, str):
+        raise SpecError(f"task {task_id!r}: {label} must be a string expression")
+    try:
+        compile_expression(value)
+    except ExpressionError as exc:
+        raise SpecError(f"task {task_id!r}: {label}: {exc}") from exc
 
 
 def _string_list(value: Any, task_id: str, name: str, allow_empty: bool = True) -> None:

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "active-adults",
+      "operator": {
+        "type": "filter",
+        "format": "jsonl",
+        "input": "data/users.jsonl",
+        "output": "build/active.jsonl",
+        "expr": "active and age >= 30"
+      }
+    },
+    {
+      "id": "label",
+      "needs": ["active-adults"],
+      "operator": {
+        "type": "derive",
+        "format": "jsonl",
+        "input": "build/active.jsonl",
+        "output": "build/labelled.jsonl",
+        "derived": {
+          "name": "first + ' ' + last",
+          "cohort": "'senior' if age >= 45 else 'mid'"
+        }
+      }
+    },
+    {
+      "id": "tidy",
+      "needs": ["label"],
+      "operator": {
+        "type": "rename",
+        "format": "jsonl",
+        "input": "build/labelled.jsonl",
+        "output": "build/people.jsonl",
+        "rename": {"id": "user_id"}
+      }
+    },
+    {
+      "id": "by-cohort",
+      "needs": ["tidy"],
+      "operator": {
+        "type": "aggregate",
+        "format": "jsonl",
+        "input": "build/people.jsonl",
+        "output": "build/cohorts.jsonl",
+        "group_by": ["cohort"],
+        "aggregations": {
+          "people": {"op": "count"},
+          "avg_age": {"op": "avg", "field": "age"}
+        }
+      }
+    }
+  ]
+}
