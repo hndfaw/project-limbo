@@ -160,6 +160,7 @@ Run from a checkout:
 PYTHONPATH=src python -m limbo.cli validate limbo.json
 PYTHONPATH=src python -m limbo.cli plan limbo.json
 PYTHONPATH=src python -m limbo.cli run limbo.json
+PYTHONPATH=src python -m limbo.cli runs            # list past runs and their status
 PYTHONPATH=src python -m limbo.cli resume <run-id>
 ```
 
@@ -169,8 +170,11 @@ After installation:
 limbo validate limbo.json
 limbo plan limbo.json
 limbo run limbo.json
+limbo runs
 limbo resume <run-id>
 ```
+
+`limbo runs` lists recent runs (newest first) with per-status task counts, so you can find the `<run-id>` to pass to `limbo resume`.
 
 ## Autonomous Development Loop
 

@@ -263,6 +263,27 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(run_id, resumed.resumed_from)
             self.assertTrue((base / "c.txt").exists())
 
+    def test_list_runs_summarizes_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            pipeline = self.write_spec(base, {"version": 1, "tasks": [
+                {"id": "ok", "command": "echo hi > ok.txt", "outputs": ["ok.txt"]},
+            ]})
+            executor = LocalExecutor(base / ".limbo", max_workers=1)
+
+            first = executor.run(pipeline)
+            second = executor.run(pipeline, force=True)
+
+            runs = executor.list_runs()
+            self.assertEqual([second.run_id, first.run_id], [r["run_id"] for r in runs])
+            self.assertEqual({"succeeded": 1}, runs[0]["counts"])
+            self.assertEqual(str((base / "limbo.json").resolve()), runs[0]["pipeline"])
+            self.assertEqual(1, len(executor.list_runs(limit=1)))
+
+    def test_list_runs_empty_when_no_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual([], LocalExecutor(Path(tmpdir) / ".limbo").list_runs())
+
     def test_resume_unknown_run_id_errors(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = Path(tmpdir)

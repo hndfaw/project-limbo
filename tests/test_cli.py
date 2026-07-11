@@ -99,6 +99,38 @@ class CliTests(unittest.TestCase):
             self.assertTrue((base / "gate_done.txt").exists())
 
 
+    def test_cli_version(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "limbo.cli", "--version"],
+            env=_env(), text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("limbo", result.stdout)
+
+    def test_cli_runs_lists_prior_run(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            state = base / ".limbo"
+            spec = base / "limbo.json"
+            spec.write_text(
+                json.dumps({"version": 1, "tasks": [
+                    {"id": "write", "command": "printf ok > out.txt", "outputs": ["out.txt"]},
+                ]}),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "run", str(spec), "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+
+            runs = subprocess.run(
+                [sys.executable, "-m", "limbo.cli", "runs", "--state-dir", str(state)],
+                cwd=str(base), env=_env(), text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(0, runs.returncode, runs.stderr)
+            self.assertIn("1 succeeded", runs.stdout)
+
+
 def _env():
     env = os.environ.copy()
     existing = env.get("PYTHONPATH")
