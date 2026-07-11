@@ -247,26 +247,11 @@ limbo timeline <run-id>
 
 `limbo runs` lists recent runs (newest first) with per-status task counts, so you can find the `<run-id>` to pass to `limbo resume`.
 
-## Autonomous Development Loop
+## Autonomous Maintenance
 
-This repository includes an opt-in GitHub Actions workflow at `.github/workflows/autonomous-claude.yml`. It uses Anthropic's official [`claude-code-action`](https://github.com/anthropics/claude-code-action), is scheduled on a true 45-minute cadence, and can also be started manually. The workflow is designed to:
+This repository is maintained by agents working **in-session** — an agent (Claude Code, Codex, or otherwise) is handed the repo and follows [`AGENTS.md`](AGENTS.md): it picks the lowest-numbered open, unblocked issue, implements it with tests, runs the full suite as the gate, and merges its own PR. See `AGENTS.md` for the full operating loop.
 
-1. Run the test suite first.
-2. Stop immediately if tests fail, preserving the rule that the next run must focus on fixing the pipeline.
-3. Ask Claude Code to inspect open issues and implement the next logical ticket (without committing).
-4. Run tests again to verify the diff.
-5. Commit and push changes back to `main` when there is a verified diff.
-
-The workflow requires **one** of these repository secrets before it can perform model-backed work:
-
-- `CLAUDE_CODE_OAUTH_TOKEN` (recommended): generated from a Claude subscription with `claude setup-token`, avoiding metered API billing.
-- `ANTHROPIC_API_KEY`: a key from [console.anthropic.com](https://console.anthropic.com), billed per token.
-
-A `GITHUB_TOKEN` is provided automatically by GitHub Actions for repository writes when workflow permissions allow it.
-
-The loop runs on **Claude Sonnet 5** (`--model claude-sonnet-5`) — near-Opus quality on coding and agentic work at a lower per-token cost, which suits a job that runs every 45 minutes. Switch the `--model` line in the workflow to `claude-opus-4-8` for maximum capability, or `claude-haiku-4-5` for the cheapest runs.
-
-The workflow is intentionally auditable: it fails loudly when no Claude credential is configured, does not hide test failures, keeps commit/push under the workflow's control rather than the model's, and each autonomous run produces normal Git history.
+There is intentionally **no scheduled cloud workflow** driving development: that path requires a metered model credential and runs even when no session is open. The in-session model does the same work on demand at no per-run API cost. The only GitHub Actions workflow kept is **CI** (`.github/workflows/ci.yml`), which runs the test suite on every push and pull request.
 
 ## Development
 
