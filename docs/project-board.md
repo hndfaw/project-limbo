@@ -40,6 +40,9 @@ See [`AGENTS.md`](../AGENTS.md) for the authoritative loop. In short, each run:
 4. Implements a focused change with tests and docs, then merges its own PR.
 5. Runs the full suite again before merging (never merges red).
 
-## Required Secret
+## Maintenance model
 
-Autonomous runs require one Claude credential: `CLAUDE_CODE_OAUTH_TOKEN` (recommended, from a Claude subscription via `claude setup-token`) or `ANTHROPIC_API_KEY`. The workflow fails immediately when neither secret is set so missing credentials cannot masquerade as a successful no-op run.
+Development is done by agents working in-session (see [`AGENTS.md`](../AGENTS.md)),
+not by a scheduled cloud workflow. The only GitHub Actions workflow is CI
+(`.github/workflows/ci.yml`), which runs the test suite on pushes and PRs — see
+issue #17 to re-enable it.
