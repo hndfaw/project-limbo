@@ -15,10 +15,10 @@ workflow, environment rules, and which docs to update).
 - [#4 Design and implement remote worker lease protocol](https://github.com/hndfaw/project-limbo/issues/4)
 - [#5 Add content-addressed artifact store abstraction](https://github.com/hndfaw/project-limbo/issues/5)
 - [#6 Add metrics, event stream, and timeline reports](https://github.com/hndfaw/project-limbo/issues/6)
+- [#7 Add command policy, secret redaction, and sandbox profiles](https://github.com/hndfaw/project-limbo/issues/7)
 
 ## Ready
 
-- [#7 Add command policy, secret redaction, and sandbox profiles](https://github.com/hndfaw/project-limbo/issues/7)
 - [#17 Re-enable CI to validate every PR](https://github.com/hndfaw/project-limbo/issues/17)
 - [#18 Add ruff + mypy lint and type-check gate](https://github.com/hndfaw/project-limbo/issues/18)
 - [#19 Verify pip install and the limbo console entry point](https://github.com/hndfaw/project-limbo/issues/19)
@@ -26,9 +26,9 @@ workflow, environment rules, and which docs to update).
 - [#21 Add CHANGELOG and align package version](https://github.com/hndfaw/project-limbo/issues/21)
 - [#22 End-to-end CLI verification pass](https://github.com/hndfaw/project-limbo/issues/22)
 
-## Blocked
+## Needs a dedicated session
 
-- [#8 Build durable distributed scheduler service](https://github.com/hndfaw/project-limbo/issues/8), blocked by worker, artifact, observability, and policy foundations.
+- [#8 Build durable distributed scheduler service](https://github.com/hndfaw/project-limbo/issues/8) — its foundations (#3–#7) are now all complete, so it is unblocked, but it is a large epic with real design decisions (persistence model, queue fairness, API surface). It should be taken in a focused session and likely split into sub-tickets, not grabbed by a short autonomous slot.
 
 ## Autonomous Selection Rule
 
