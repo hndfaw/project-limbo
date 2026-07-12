@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from limbo.errors import LimboError, SpecError
 from limbo.expressions import ExpressionError, compile_expression
@@ -190,7 +190,7 @@ def _write(rows: Sequence[Mapping[str, Any]], name: str, data_format: str, base_
 def _join(left: Iterable[Dict[str, Any]], right: Iterable[Dict[str, Any]], config: Mapping[str, Any]) -> List[Dict[str, Any]]:
     key = config["on"]
     index: Dict[Any, List[Dict[str, Any]]] = {}
-    right_fields = set()
+    right_fields: Set[str] = set()
     for row in right:
         try:
             index.setdefault(row.get(key), []).append(row)
@@ -234,7 +234,14 @@ def _aggregate(rows: Iterable[Dict[str, Any]], config: Mapping[str, Any]) -> Lis
                 values = [float(row[aggregation["field"]]) for row in members]
             except (KeyError, TypeError, ValueError) as exc:
                 raise OperatorError(f"aggregation {name!r} requires numeric field {aggregation['field']!r}") from exc
-            value = {"sum": sum, "min": min, "max": max}[op](values) if op != "avg" else sum(values) / len(values)
+            if op == "avg":
+                value = sum(values) / len(values)
+            elif op == "sum":
+                value = sum(values)
+            elif op == "min":
+                value = min(values)
+            else:  # max
+                value = max(values)
             output[name] = int(value) if value.is_integer() else value
         result.append(output)
     return result

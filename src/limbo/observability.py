@@ -134,9 +134,10 @@ class RunMetrics:
         queue_seconds = 0.0
         for result in results:
             status = getattr(result, "status", None)
-            by_status[status] = by_status.get(status, 0) + 1
-            if status in ("succeeded", "failed", "skipped"):
-                run_seconds += float(getattr(result, "duration_seconds", 0.0) or 0.0)
+            if isinstance(status, str):
+                by_status[status] = by_status.get(status, 0) + 1
+                if status in ("succeeded", "failed", "skipped"):
+                    run_seconds += float(getattr(result, "duration_seconds", 0.0) or 0.0)
             queued_at = getattr(result, "queued_at", None)
             started_at = getattr(result, "started_at", None)
             if queued_at is not None and started_at is not None and started_at >= queued_at:

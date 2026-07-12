@@ -10,7 +10,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from limbo.artifacts import Artifact, ArtifactStore, hash_file
 from limbo.cache import CacheEntry, TaskCache
@@ -194,7 +194,7 @@ class LocalExecutor:
         pipeline_path = manifest.get("pipeline")
         if not pipeline_path:
             raise ExecutionError(f"run {run_id!r} manifest does not record a pipeline path to resume")
-        path = Path(pipeline_path)
+        path = Path(str(pipeline_path))
         if not path.exists():
             raise ExecutionError(f"cannot resume run {run_id!r}: pipeline {pipeline_path} no longer exists")
 
@@ -444,6 +444,7 @@ class LocalExecutor:
                 stdout_path.write_text(f"wrote {count} row(s)\n", encoding="utf-8")
                 stderr_path.write_text("", encoding="utf-8")
                 return 0, False, None
+            assert task.command is not None  # operator branch returned above
             completed = subprocess.run(
                 task.command,
                 cwd=str(cwd),
@@ -458,8 +459,8 @@ class LocalExecutor:
             reason = None if completed.returncode == 0 else f"exit code {completed.returncode}"
             return completed.returncode, False, reason
         except subprocess.TimeoutExpired as exc:
-            stdout_path.write_text(exc.stdout or "", encoding="utf-8")
-            stderr_path.write_text((exc.stderr or "") + f"\nTask timed out after {task.timeout_seconds} seconds.\n", encoding="utf-8")
+            stdout_path.write_text(_as_text(exc.stdout), encoding="utf-8")
+            stderr_path.write_text(_as_text(exc.stderr) + f"\nTask timed out after {task.timeout_seconds} seconds.\n", encoding="utf-8")
             return None, True, "timeout"
         except OperatorError as exc:
             stdout_path.write_text("", encoding="utf-8")
@@ -499,6 +500,16 @@ class LocalExecutor:
             ],
         }
         (run_dir / "manifest.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _as_text(value: object) -> str:
+    """Coerce captured process output (str, bytes, or None) to text."""
+
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
 
 
 def _resolve_output(base_dir: Path, output: str) -> Path:
