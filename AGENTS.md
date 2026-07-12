@@ -56,7 +56,11 @@ into a distributed task scheduler). Product/architecture details live in
   - `docs/project-board.md` — move the ticket to **Done**; promote any now-unblocked
     dependents into **Ready**.
   - `src/limbo/__init__.py` — re-export any new public API and keep `__all__` current.
-  - Keep `__version__` in `src/limbo/__init__.py` in sync with `pyproject.toml`.
+  - Keep `__version__` in `src/limbo/__init__.py` in sync with `pyproject.toml`
+    (a test enforces this). For a user-facing change, add a note under
+    `[Unreleased]` in `CHANGELOG.md`. Cutting a release = bump both versions in
+    one change, move `[Unreleased]` into a dated version section, tag `vX.Y.Z`,
+    and publish a matching GitHub Release.
 - **Ship it:** commit, push, open a PR, then **merge it yourself**:
   `gh pr merge <n> --squash --delete-branch`. **Never wait for human approval.**
 - **Close the issue** with a one-paragraph summary:

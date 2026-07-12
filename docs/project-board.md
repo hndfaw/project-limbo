@@ -20,10 +20,10 @@ workflow, environment rules, and which docs to update).
 - [#18 Add ruff + mypy lint and type-check gate](https://github.com/hndfaw/project-limbo/issues/18)
 - [#19 Verify pip install and the limbo console entry point](https://github.com/hndfaw/project-limbo/issues/19)
 - [#20 Refresh architecture doc for leases, artifacts, observability](https://github.com/hndfaw/project-limbo/issues/20)
+- [#21 Add CHANGELOG and align package version](https://github.com/hndfaw/project-limbo/issues/21)
 
 ## Ready
 
-- [#21 Add CHANGELOG and align package version](https://github.com/hndfaw/project-limbo/issues/21)
 - [#22 End-to-end CLI verification pass](https://github.com/hndfaw/project-limbo/issues/22)
 
 ## Needs a dedicated session
