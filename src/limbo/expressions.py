@@ -225,7 +225,8 @@ def _eval_node(node: ast.AST, row: Mapping[str, Any], source: str) -> Any:
         return [_eval_node(element, row, source) for element in node.elts]
 
     if isinstance(node, ast.Call):
-        function = _FUNCTIONS[node.func.id]  # validated earlier
+        assert isinstance(node.func, ast.Name)  # guaranteed by _validate_node
+        function = _FUNCTIONS[node.func.id]
         arguments = [_eval_node(argument, row, source) for argument in node.args]
         try:
             return function(*arguments)

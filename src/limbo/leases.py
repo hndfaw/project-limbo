@@ -221,6 +221,8 @@ class LeaseStore:
         task_id = data.get("task_id")
         worker_id = data.get("worker_id")
         lease_id = data.get("lease_id")
+        if not isinstance(task_id, str) or not isinstance(worker_id, str) or not isinstance(lease_id, str):
+            raise LeaseError("malformed lease token")
         active = self._active.get(task_id)
         if active is None or active.lease_id != lease_id or active.worker_id != worker_id:
             raise LeaseError(f"lease for task {task_id!r} is no longer held by {worker_id!r}")

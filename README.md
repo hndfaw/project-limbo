@@ -287,6 +287,15 @@ Run tests locally:
 PYTHONPATH=src python -m unittest discover -s tests
 ```
 
+Lint and type-check (install the dev tools with `pip install -e ".[dev]"`):
+
+```bash
+ruff check src tests   # linting
+mypy                   # type checking (config in pyproject.toml)
+```
+
+CI runs all three (ruff, mypy, and the test matrix) on every pull request.
+
 Run a focused command:
 
 ```bash

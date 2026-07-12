@@ -108,6 +108,10 @@ into a distributed task scheduler). Product/architecture details live in
 # Full test suite (the gate)
 PYTHONPATH=src python3 -m unittest discover -s tests
 
+# Lint + type-check (also enforced by CI; install with: pip install -e ".[dev]")
+ruff check src tests
+mypy
+
 # Run / inspect a pipeline
 PYTHONPATH=src python3 -m limbo.cli run <spec.json>
 PYTHONPATH=src python3 -m limbo.cli runs
