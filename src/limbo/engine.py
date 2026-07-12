@@ -16,7 +16,7 @@ from limbo.artifacts import Artifact, ArtifactStore, hash_file
 from limbo.cache import CacheEntry, TaskCache
 from limbo.errors import ExecutionError
 from limbo.fingerprint import outputs_exist, task_fingerprint
-from limbo.observability import EventLog, RunMetrics, redact_env
+from limbo.observability import EventLog, RunMetrics, redact_env, redact_text
 from limbo.graph import downstream_tasks
 from limbo.operators import OperatorError, run_operator
 from limbo.spec import PipelineSpec, TaskSpec
@@ -86,12 +86,12 @@ class RunResult:
         lines: List[str] = []
         for result in self.failed:
             attempts = result.attempts or ()
-            detail = result.reason or (
+            detail = redact_text(result.reason) or (
                 f"exit code {result.returncode}" if result.returncode is not None else "failed"
             )
             lines.append(f"{result.task_id}: {detail} after {max(1, len(attempts))} attempt(s)")
             for attempt in attempts:
-                outcome = attempt.reason or (
+                outcome = redact_text(attempt.reason) or (
                     f"exit code {attempt.returncode}" if attempt.returncode is not None else attempt.status
                 )
                 lines.append(f"    attempt {attempt.number}: {attempt.status} ({outcome})")
@@ -345,6 +345,21 @@ class LocalExecutor:
                 reason="cache-hit",
             )
 
+        if task.command is not None:
+            denial = pipeline.policy.commands.violation(task.command)
+            if denial is not None:
+                # Fail closed: a denied command is never executed.
+                events.emit("task_denied", task_id=task.id, reason=f"policy: {denial}")
+                return TaskResult(
+                    task_id=task.id,
+                    status="failed",
+                    fingerprint=fingerprint,
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    returncode=None,
+                    reason=f"policy: {denial}",
+                )
+
         events.emit("task_started", task_id=task.id, env=redact_env(task.env) or None)
 
         task_dir = run_dir / task.id
@@ -421,8 +436,7 @@ class LocalExecutor:
         """Run a task once, write its logs, and report (returncode, timed_out, reason)."""
 
         cwd = _task_cwd(pipeline.base_dir, task)
-        env = os.environ.copy()
-        env.update(task.env)
+        env = pipeline.policy.env.resolve(os.environ, task.env)
 
         try:
             if task.operator is not None:
@@ -468,13 +482,13 @@ class LocalExecutor:
                     "returncode": result.returncode,
                     "stdout_path": str(result.stdout_path) if result.stdout_path else None,
                     "stderr_path": str(result.stderr_path) if result.stderr_path else None,
-                    "reason": result.reason,
+                    "reason": redact_text(result.reason),
                     "attempts": [
                         {
                             "number": attempt.number,
                             "status": attempt.status,
                             "returncode": attempt.returncode,
-                            "reason": attempt.reason,
+                            "reason": redact_text(attempt.reason),
                             "duration_seconds": attempt.duration_seconds,
                         }
                         for attempt in result.attempts

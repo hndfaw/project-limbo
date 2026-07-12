@@ -43,6 +43,26 @@ def redact_env(env: Mapping[str, str]) -> Dict[str, str]:
     return {name: (REDACTED if looks_secret(name, value) else value) for name, value in env.items()}
 
 
+# Token shapes worth scrubbing out of free text (reasons, error messages).
+_SECRET_TOKEN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{8,}"
+    r"|ghp_[A-Za-z0-9]{8,}"
+    r"|gho_[A-Za-z0-9]{8,}"
+    r"|github_pat_[A-Za-z0-9_]{8,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{8,}"
+    r"|AKIA[0-9A-Z]{12,}"
+    r"|-----BEGIN [A-Z ]+PRIVATE KEY-----)"
+)
+
+
+def redact_text(text: Optional[str]) -> Optional[str]:
+    """Replace secret-shaped tokens in a string Limbo generates (reasons, errors)."""
+
+    if not isinstance(text, str):
+        return text
+    return _SECRET_TOKEN.sub(REDACTED, text)
+
+
 class EventLog:
     """A thread-safe JSONL writer for task lifecycle events."""
 

@@ -154,6 +154,30 @@ limbo resume <run-id>       # restarts only the incomplete work
 
 Retry configuration deliberately does not affect a task's fingerprint, so caches stay deterministic across retries and resumes.
 
+## Policy & Safety
+
+A pipeline can carry a top-level `policy` block that constrains how its tasks run — useful when executing untrusted or semi-trusted pipeline definitions (`src/limbo/policy.py`):
+
+- **Command allow/deny lists** — `policy.commands.allow` and `policy.commands.deny` are lists of command patterns (glob, matched against the whole command and its first token). **Deny wins**, and when an allowlist is set anything not matching it is refused. A denied command **fails closed**: it is never executed, the task fails, and the CLI exits non-zero.
+- **Environment inheritance** — `policy.env.inherit` (`all` or `none`) plus an optional `policy.env.allow` name list control which parent-process environment variables a task's command inherits. A task's own `env` is always applied on top.
+- **Sandbox profiles** — `policy.sandbox_profiles` defines named isolation profiles (`network`, `allow_paths`, `description`) that tasks reference via a `sandbox` field. The model is validated now; enforcement is left to future platform-specific backends.
+
+```json
+{
+  "version": 1,
+  "policy": {
+    "commands": {"deny": ["curl*", "rm *"], "allow": ["python3*", "printf*"]},
+    "env": {"inherit": "none", "allow": ["PATH"]},
+    "sandbox_profiles": {"strict": {"network": false, "description": "no network"}}
+  },
+  "tasks": [
+    {"id": "build", "command": "python3 build.py", "sandbox": "strict"}
+  ]
+}
+```
+
+Secret-looking values that Limbo itself serializes — environment metadata in events, and failure reasons in manifests and error summaries — are redacted (`***redacted***`) by name and by token shape (`sk-…`, `ghp_…`, `AKIA…`, PEM headers, etc.).
+
 ## Observability
 
 Every run writes structured **events** and **metrics** so failures are easy to debug:
@@ -275,7 +299,7 @@ PYTHONPATH=src python -m limbo.cli plan examples/basic.json
 - Issue 4: Worker lease protocol with signed, expiring task leases and dependency-gated claiming.
 - Issue 5: Content-addressed artifact store with digest metadata, manifest references, and digest-based cache validation.
 - Issue 6: JSONL lifecycle events, run metrics, secret redaction, and `limbo inspect` / `limbo timeline`.
-- Issue 7: Policy engine for command allowlists, secret redaction, and sandbox profiles.
+- Issue 7: Policy engine — command allow/deny lists (fail-closed), env inheritance, sandbox profile model, and secret redaction in generated output.
 - Issue 8: Distributed scheduler with heartbeats and backpressure.
 
 ## License

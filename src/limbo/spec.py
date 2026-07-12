@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from limbo.errors import SpecError
+from limbo.policy import Policy, parse_policy
 from limbo.retry import RetryPolicy, parse_retry_policy
 
 
@@ -28,6 +29,7 @@ class TaskSpec:
     timeout_seconds: Optional[float] = None
     operator: Optional[Dict[str, Any]] = None
     retry: RetryPolicy = field(default_factory=RetryPolicy)
+    sandbox: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class PipelineSpec:
     tasks: List[TaskSpec]
     base_dir: Path
     source_path: Optional[Path] = None
+    policy: Policy = field(default_factory=Policy)
 
     @property
     def task_map(self) -> Dict[str, TaskSpec]:
@@ -67,7 +70,8 @@ def load_pipeline(path: Path) -> PipelineSpec:
         raise SpecError("pipeline must contain a non-empty tasks list")
 
     tasks = [_parse_task(item, index) for index, item in enumerate(tasks_raw)]
-    pipeline = PipelineSpec(version=version, tasks=tasks, base_dir=path.parent, source_path=path)
+    policy = parse_policy(raw.get("policy"))
+    pipeline = PipelineSpec(version=version, tasks=tasks, base_dir=path.parent, source_path=path, policy=policy)
     validate_pipeline(pipeline)
     return pipeline
 
@@ -93,6 +97,12 @@ def validate_pipeline(pipeline: PipelineSpec) -> None:
                 missing.append(f"{task.id}->{dep}")
     if missing:
         raise SpecError(f"missing dependency task(s): {', '.join(sorted(missing))}")
+
+    for task in pipeline.tasks:
+        if task.sandbox is not None and task.sandbox not in pipeline.policy.sandbox_profiles:
+            raise SpecError(
+                f"task {task.id!r}: sandbox {task.sandbox!r} is not defined in policy.sandbox_profiles"
+            )
 
     _ensure_acyclic(pipeline.tasks)
 
@@ -134,6 +144,10 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
 
     retry = parse_retry_policy(raw.get("retry"), task_id)
 
+    sandbox = raw.get("sandbox")
+    if sandbox is not None and (not isinstance(sandbox, str) or not sandbox):
+        raise SpecError(f"task {task_id!r}: sandbox must be a non-empty string")
+
     return TaskSpec(
         id=task_id,
         command=command,
@@ -145,6 +159,7 @@ def _parse_task(raw: Any, index: int) -> TaskSpec:
         cwd=cwd,
         timeout_seconds=timeout_seconds,
         retry=retry,
+        sandbox=sandbox,
     )
 
 
