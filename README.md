@@ -259,7 +259,13 @@ PYTHONPATH=src python -m limbo.cli runs            # list past runs and their st
 PYTHONPATH=src python -m limbo.cli resume <run-id>
 ```
 
-After installation:
+Install the package (which puts a `limbo` command on your `PATH` via the `limbo = limbo.cli:main` console entry point):
+
+```bash
+pip install .        # from a checkout; or `pip install -e .` for development
+```
+
+After installation the `limbo` command works from anywhere — no `PYTHONPATH` needed:
 
 ```bash
 limbo validate limbo.json
