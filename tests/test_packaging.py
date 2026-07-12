@@ -38,6 +38,12 @@ class PackagingTests(unittest.TestCase):
         for name in limbo.__all__:
             self.assertTrue(hasattr(limbo, name), name)
 
+    def test_changelog_documents_current_version(self):
+        changelog = REPO_ROOT / "CHANGELOG.md"
+        self.assertTrue(changelog.exists(), "CHANGELOG.md is missing")
+        text = changelog.read_text(encoding="utf-8")
+        self.assertIn(f"[{limbo.__version__}]", text)
+
 
 if __name__ == "__main__":
     unittest.main()
