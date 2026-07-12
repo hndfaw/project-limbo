@@ -16,10 +16,10 @@ workflow, environment rules, and which docs to update).
 - [#5 Add content-addressed artifact store abstraction](https://github.com/hndfaw/project-limbo/issues/5)
 - [#6 Add metrics, event stream, and timeline reports](https://github.com/hndfaw/project-limbo/issues/6)
 - [#7 Add command policy, secret redaction, and sandbox profiles](https://github.com/hndfaw/project-limbo/issues/7)
+- [#17 Re-enable CI to validate every PR](https://github.com/hndfaw/project-limbo/issues/17)
 
 ## Ready
 
-- [#17 Re-enable CI to validate every PR](https://github.com/hndfaw/project-limbo/issues/17)
 - [#18 Add ruff + mypy lint and type-check gate](https://github.com/hndfaw/project-limbo/issues/18)
 - [#19 Verify pip install and the limbo console entry point](https://github.com/hndfaw/project-limbo/issues/19)
 - [#20 Refresh architecture doc for leases, artifacts, observability](https://github.com/hndfaw/project-limbo/issues/20)

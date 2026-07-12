@@ -1,5 +1,7 @@
 # Project Limbo
 
+[![CI](https://github.com/hndfaw/project-limbo/actions/workflows/ci.yml/badge.svg)](https://github.com/hndfaw/project-limbo/actions/workflows/ci.yml)
+
 > **Working on this repo (human or agent)?** Read [`AGENTS.md`](AGENTS.md) first — it is the operating manual: how to pick the next task, the implement → test → merge workflow, and which docs to keep updated.
 
 Project Limbo is a local-first pipeline engine for teams that need reproducible automation without committing to a heavyweight orchestrator. It runs declarative DAGs of tasks, fingerprints their inputs, skips work that is already up to date, captures structured logs, and fails fast when a dependency chain is unsafe to continue.

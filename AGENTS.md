@@ -77,8 +77,11 @@ into a distributed task scheduler). Product/architecture details live in
   - keep shell commands free of `{...}` / `${...}` next to quotes.
 - **Merging:** you are authorized to merge your own PRs (squash, delete branch)
   and, where configured, push to `main`. Do not wait for approval.
-- **Tests are the gate.** Locally you must be green before merging. Once CI
-  (issue #17) is enabled, PRs must also be green in CI.
+- **Tests are the gate.** You must be green locally before merging. CI
+  (`.github/workflows/ci.yml`) also runs the suite on every PR across Python
+  3.9–3.12; confirm it is green (`gh pr checks <n>`) before merging. `main` is
+  intentionally **not** branch-protected so autonomous self-merge works — that
+  makes *you* the gate: never merge a PR whose CI is failing.
 
 ---
 
