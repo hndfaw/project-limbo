@@ -12,6 +12,78 @@ The long-term vision is a production-grade scheduler that can start as a single 
 
 Most useful automation starts small: a few scripts, a handful of files, and a README with the right command order. The pain starts when those scripts need retries, cache invalidation, observability, parallelism, and safe resumption after failure. Limbo turns those implicit conventions into a graph that can be inspected, tested, and executed deterministically.
 
+## Quickstart: a revenue summary from a CSV
+
+Turn a raw orders CSV into a revenue-per-product summary in three declarative
+stages — no spreadsheet formulas and no glue scripts. Create two files in an
+empty directory:
+
+`orders.csv`
+
+```csv
+order_id,product,status,qty,price
+1001,Widget,paid,3,10.00
+1002,Gadget,paid,1,20.00
+1003,Widget,refunded,2,10.00
+1004,Gadget,paid,2,20.00
+1005,Widget,paid,5,10.00
+1006,Gizmo,paid,4,4.50
+1007,Gadget,refunded,1,20.00
+```
+
+`pipeline.json` — filter to paid orders, derive `revenue = price × qty`, then
+aggregate by product:
+
+```json
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "paid-orders",
+      "operator": {"type": "filter", "format": "csv", "input": "orders.csv",
+                   "output": "build/paid.csv", "expr": "status == 'paid'"}
+    },
+    {
+      "id": "with-revenue",
+      "needs": ["paid-orders"],
+      "operator": {"type": "derive", "format": "csv", "input": "build/paid.csv",
+                   "output": "build/revenue.csv",
+                   "derived": {"revenue": "round(float(price) * int(qty), 2)"}}
+    },
+    {
+      "id": "by-product",
+      "needs": ["with-revenue"],
+      "operator": {"type": "aggregate", "format": "csv", "input": "build/revenue.csv",
+                   "output": "build/summary.csv", "group_by": ["product"],
+                   "aggregations": {"orders": {"op": "count"},
+                                    "total_revenue": {"op": "sum", "field": "revenue"}}}
+    }
+  ]
+}
+```
+
+Run it (`pip install .` first, or use `PYTHONPATH=src python -m limbo.cli` from a checkout):
+
+```bash
+limbo plan pipeline.json     # preview the dependency levels
+limbo run pipeline.json      # execute
+cat build/summary.csv
+```
+
+```csv
+product,orders,total_revenue
+Widget,2,80
+Gadget,2,60
+Gizmo,1,18
+```
+
+Now the payoff that makes this more than a script:
+
+- **Re-run it** with nothing changed — every stage reports `skipped (cache-hit)`. Edit `orders.csv` and re-run — only the affected stages rebuild.
+- **`limbo runs`** lists past runs; **`limbo timeline <run-id>`** shows the step-by-step execution; **`limbo inspect <run-id>`** reports statuses and metrics.
+
+Point `input` at a file another tool produces, add a `command` task to publish `build/summary.csv`, or swap in your own CSV — Limbo runs the steps in dependency order, skips work that is already done, and records every run.
+
 ## Current Capabilities
 
 - JSON pipeline specs with explicit task dependencies.
